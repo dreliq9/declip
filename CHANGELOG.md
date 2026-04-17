@@ -2,6 +2,37 @@
 
 ---
 
+## v0.8.0 — 2026-04-16 — "Structured Quick Tools"
+
+Adds Pydantic structured outputs to the four `quick_tools` MCP tools — `declip_probe`, `declip_trim`, `declip_concat`, `declip_thumbnail`. FastMCP now serializes each result into both `content` (the same human-readable text via `__str__`) AND `structuredContent` (typed JSON). Agents can read `result.duration_seconds`, `result.file_size_bytes`, etc. directly without parsing the formatted string.
+
+### What changed
+
+- **New `src/declip/mcp/types.py`** — `ProbeResult`, `TrimResult`, `ConcatResult`, `ThumbnailResult`, plus a shared `FileResult` base.
+- **`quick_tools.py`** — all 4 tools return Pydantic models. `__str__` preserves the existing text output verbatim so agents that grep the text don't break.
+- **Validated inputs:** `declip_trim.trim_in` `ge=0`, `trim_out` `gt=0`. `declip_concat.files` `min_length=2`. `declip_thumbnail.timestamp` `ge=0`.
+- **Failure semantics:** the old `"Error: …"` prefix in the text is preserved, but failures now also carry `success=False` + `error=…` in `structuredContent`.
+
+### Migration
+
+Existing agents that read the text output keep working — `__str__` reproduces the previous strings byte-for-byte. New agents can read structured fields:
+
+- `result.duration_seconds`, `result.fps`, `result.video_codec` from `declip_probe`
+- `result.output_path`, `result.file_size_bytes`, `result.smart`, `result.re_encoded_head_seconds` from `declip_trim`
+- `result.file_count`, `result.method` (`"stream-copy"` or `"re-encoded"`) from `declip_concat`
+- `result.timestamp_seconds`, `result.width`, `result.height` from `declip_thumbnail`
+
+### Out of scope (follow-up)
+
+`analysis_tools`, `media_tools`, `advanced_tools`, `generate_tools`, `edit_tools`, `pipeline_tools`, `project_tools` still return strings. Same envelope pattern applies — convert per-module in follow-up PRs.
+
+### Dependency updates
+
+- `mcp>=1.10` (was `>=1.2.0` — way old)
+- `pydantic>=2.7` (was `>=2.0`)
+
+---
+
 ## v0.7.0 — 2026-03-29 — "Less Is More"
 
 Phase 7: Silero VAD speech detection + tool consolidation. Better AI decision-making with fewer tools.
