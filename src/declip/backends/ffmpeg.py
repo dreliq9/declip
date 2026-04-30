@@ -328,16 +328,18 @@ def _xfade_cmd(
     """Build FFmpeg command with xfade transitions between clips."""
     cmd = ["ffmpeg", "-y"]
 
-    # Add all inputs
+    # Add all inputs. Both -ss and -t must come BEFORE -i so FFmpeg associates
+    # them with this input — otherwise -t leaks onto the next clip's input opts
+    # (or onto the output for the final clip), truncating the render.
     for clip in clips:
         asset = _resolve_asset(clip.asset, project_dir)
         if clip.trim_in > 0:
             cmd += ["-ss", str(clip.trim_in)]
-        cmd += ["-i", asset]
         if clip.trim_out is not None:
             cmd += ["-t", str(clip.trim_out - clip.trim_in)]
         elif clip.duration is not None:
             cmd += ["-t", str(clip.duration)]
+        cmd += ["-i", asset]
 
     n = len(clips)
     parts = []

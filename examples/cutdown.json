@@ -1,0 +1,65 @@
+{
+  "version": "1.0",
+  "settings": {
+    "resolution": [1920, 1080],
+    "fps": 30,
+    "background": "#000000"
+  },
+  "timeline": {
+    "tracks": [
+      {
+        "id": "main",
+        "clips": [
+          {
+            "asset": "long_source.mp4",
+            "start": 0,
+            "trim_in": 12.5,
+            "trim_out": 22.0,
+            "filters": [
+              {"type": "fade_in", "duration": 0.5}
+            ]
+          },
+          {
+            "asset": "long_source.mp4",
+            "start": "auto",
+            "trim_in": 78.0,
+            "trim_out": 88.0,
+            "transition_in": {
+              "type": "dissolve",
+              "duration": 0.5
+            }
+          },
+          {
+            "asset": "long_source.mp4",
+            "start": "auto",
+            "trim_in": 154.5,
+            "trim_out": 164.0,
+            "transition_in": {
+              "type": "dissolve",
+              "duration": 0.5
+            }
+          },
+          {
+            "asset": "long_source.mp4",
+            "start": "auto",
+            "trim_in": 230.0,
+            "trim_out": 240.0,
+            "transition_in": {
+              "type": "dissolve",
+              "duration": 0.5
+            },
+            "filters": [
+              {"type": "fade_out", "duration": 0.5}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "output": {
+    "path": "cutdown_output.mp4",
+    "format": "mp4",
+    "codec": "h264",
+    "quality": "medium"
+  }
+}

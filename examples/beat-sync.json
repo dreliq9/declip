@@ -1,0 +1,42 @@
+{
+  "version": "1.0",
+  "settings": {
+    "resolution": [1920, 1080],
+    "fps": 30,
+    "background": "#000000"
+  },
+  "timeline": {
+    "tracks": [
+      {
+        "id": "video",
+        "clips": [
+          {"asset": "footage.mp4", "start": 0,    "trim_in": 0,   "trim_out": 1.0},
+          {"asset": "footage.mp4", "start": 1.0,  "trim_in": 12,  "trim_out": 13.0},
+          {"asset": "footage.mp4", "start": 2.0,  "trim_in": 24,  "trim_out": 25.0},
+          {"asset": "footage.mp4", "start": 3.0,  "trim_in": 36,  "trim_out": 37.0},
+          {"asset": "footage.mp4", "start": 4.0,  "trim_in": 48,  "trim_out": 49.0},
+          {"asset": "footage.mp4", "start": 5.0,  "trim_in": 60,  "trim_out": 61.0},
+          {"asset": "footage.mp4", "start": 6.0,  "trim_in": 72,  "trim_out": 73.0},
+          {"asset": "footage.mp4", "start": 7.0,  "trim_in": 84,  "trim_out": 85.0}
+        ]
+      },
+      {
+        "id": "music",
+        "clips": [
+          {
+            "asset": "song.mp3",
+            "start": 0,
+            "trim_in": 0,
+            "trim_out": 8.0
+          }
+        ]
+      }
+    ]
+  },
+  "output": {
+    "path": "beat_sync_output.mp4",
+    "format": "mp4",
+    "codec": "h264",
+    "quality": "medium"
+  }
+}

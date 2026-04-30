@@ -1,0 +1,47 @@
+{
+  "version": "1.0",
+  "settings": {
+    "resolution": [1920, 1080],
+    "fps": 30,
+    "background": "#000000"
+  },
+  "timeline": {
+    "tracks": [
+      {
+        "id": "main",
+        "clips": [
+          {
+            "asset": "interview.mp4",
+            "start": 0,
+            "trim_in": 1.4,
+            "trim_out": 8.7
+          },
+          {
+            "asset": "interview.mp4",
+            "start": "auto",
+            "trim_in": 10.2,
+            "trim_out": 19.5
+          },
+          {
+            "asset": "interview.mp4",
+            "start": "auto",
+            "trim_in": 21.8,
+            "trim_out": 34.6
+          },
+          {
+            "asset": "interview.mp4",
+            "start": "auto",
+            "trim_in": 36.0,
+            "trim_out": 48.2
+          }
+        ]
+      }
+    ]
+  },
+  "output": {
+    "path": "cleaned_output.mp4",
+    "format": "mp4",
+    "codec": "h264",
+    "quality": "high"
+  }
+}
