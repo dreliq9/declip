@@ -1,4 +1,8 @@
-"""AI video generation via fal.ai — Kling 3.0, Wan 2.5, and other models.
+"""AI video generation via fal.ai.
+
+Model catalog comes from declip.fetch_models, which scrapes fal.ai/explore/models
+and caches to ~/.cache/declip/fal_models.json (24h TTL). Aliases and
+per-second pricing live there too.
 
 Requires FAL_KEY environment variable to be set.
 """
@@ -13,43 +17,13 @@ from urllib.request import urlretrieve
 
 import fal_client
 
-
-# ---------------------------------------------------------------------------
-# Model registry
-# ---------------------------------------------------------------------------
-
-MODELS = {
-    # Kling 3.0
-    "kling-3": "fal-ai/kling-video/v3/standard/text-to-video",
-    "kling-3-pro": "fal-ai/kling-video/v3/pro/text-to-video",
-    "kling-3-i2v": "fal-ai/kling-video/v3/standard/image-to-video",
-    "kling-3-i2v-pro": "fal-ai/kling-video/v3/pro/image-to-video",
-    # Kling 2.6
-    "kling-2.6": "fal-ai/kling-video/v2.6/standard/text-to-video",
-    "kling-2.6-pro": "fal-ai/kling-video/v2.6/pro/text-to-video",
-    "kling-2.6-i2v": "fal-ai/kling-video/v2.6/standard/image-to-video",
-    # Wan 2.5
-    "wan-2.5": "fal-ai/wan-25-preview/text-to-video",
-    "wan-2.5-i2v": "fal-ai/wan-25-preview/image-to-video",
-    # Wan 2.6
-    "wan-2.6": "fal-ai/wan/v2.6/text-to-video",
-    "wan-2.6-i2v": "fal-ai/wan/v2.6/image-to-video",
-    # Budget options
-    "ltx": "fal-ai/ltx-video",
-    "luma-flash": "fal-ai/luma-dream-machine/ray-2-flash",
-    "luma": "fal-ai/luma-dream-machine/ray-2",
-    # Premium
-    "veo-3": "fal-ai/veo3",
-}
-
-# Approximate cost per second (for estimation, not billing)
-MODEL_COST_PER_SEC = {
-    "kling-3": 0.17, "kling-3-pro": 0.22,
-    "kling-2.6": 0.07, "kling-2.6-pro": 0.14,
-    "wan-2.5": 0.05, "wan-2.6": 0.06,
-    "ltx": 0.008, "luma-flash": 0.04, "luma": 0.10,
-    "veo-3": 0.40,
-}
+from declip.fetch_models import (
+    ALIASES,
+    cost_per_sec,
+    fetch_models,
+    resolve_endpoint,
+    to_image_to_video,
+)
 
 
 def _check_key():
@@ -113,17 +87,12 @@ def generate_video(
     """
     _check_key()
 
-    # Resolve model endpoint
-    if model in MODELS:
-        endpoint = MODELS[model]
-    else:
-        endpoint = model  # Allow raw endpoint IDs
+    # Resolve alias (or pass through if already a raw endpoint)
+    endpoint = resolve_endpoint(model)
 
-    # Auto-switch to i2v endpoint if image provided
-    if image_path and not model.endswith("-i2v"):
-        i2v_model = model + "-i2v"
-        if i2v_model in MODELS:
-            endpoint = MODELS[i2v_model]
+    # Auto-switch to i2v sibling if image provided and endpoint advertises text-to-video
+    if image_path:
+        endpoint = to_image_to_video(endpoint)
 
     # Build arguments
     args: dict = {
@@ -165,9 +134,9 @@ def generate_video(
     result_seed = result.get("seed")
 
     # Estimate cost
-    cost_per_sec = MODEL_COST_PER_SEC.get(model, 0.10)
-    estimated_cost = cost_per_sec * duration
-    if generate_audio and "kling" in model:
+    rate = cost_per_sec(model) or cost_per_sec(endpoint) or 0.10
+    estimated_cost = rate * duration
+    if generate_audio and "kling" in endpoint:
         estimated_cost *= 1.5  # Audio adds ~50%
 
     # Download if path provided
@@ -239,16 +208,15 @@ def estimate_cost(
     count: int = 1,
     audio: bool = False,
 ) -> dict:
-    """Estimate generation cost without running anything.
-
-    Returns dict with per-clip and total cost.
-    """
-    cost_per_sec = MODEL_COST_PER_SEC.get(model, 0.10)
-    per_clip = cost_per_sec * duration
-    if audio and "kling" in model:
+    """Estimate generation cost without running anything."""
+    endpoint = resolve_endpoint(model)
+    rate = cost_per_sec(model) or cost_per_sec(endpoint) or 0.10
+    per_clip = rate * duration
+    if audio and "kling" in endpoint:
         per_clip *= 1.5
     return {
         "model": model,
+        "endpoint": endpoint,
         "duration_sec": duration,
         "clips": count,
         "cost_per_clip": round(per_clip, 3),
@@ -257,16 +225,60 @@ def estimate_cost(
     }
 
 
-def list_models() -> dict[str, dict]:
-    """List available models with pricing info."""
-    result = {}
-    for name, endpoint in MODELS.items():
-        is_i2v = name.endswith("-i2v")
-        cost = MODEL_COST_PER_SEC.get(name.replace("-i2v", ""), 0.10)
-        result[name] = {
+def _classify_type(endpoint: str) -> str:
+    e = endpoint.lower()
+    if "/image-to-video" in e:
+        return "image-to-video"
+    if "/video-to-video" in e:
+        return "video-to-video"
+    if "/first-last-frame-to-video" in e:
+        return "first-last-frame-to-video"
+    if "/reference-to-video" in e:
+        return "reference-to-video"
+    if "/text-to-video" in e:
+        return "text-to-video"
+    return "video"  # bare-root endpoints like fal-ai/veo3, fal-ai/sora-2/text-to-video etc.
+
+
+def list_models(force_refresh: bool = False, video_only: bool = True) -> dict[str, dict]:
+    """List available models from the live fal.ai catalog plus convenience aliases.
+
+    Returns a dict keyed by display name. For aliases the name is the short form
+    ("kling-3"); for non-aliased catalog entries the name is the canonical endpoint.
+    """
+    catalog = fetch_models(force_refresh=force_refresh)
+    by_endpoint = {m.endpoint: m for m in catalog}
+
+    result: dict[str, dict] = {}
+
+    # Aliases first so popular short names sort to the top of the dict
+    for alias, endpoint in ALIASES.items():
+        info = by_endpoint.get(endpoint)
+        rate = cost_per_sec(endpoint)
+        result[alias] = {
             "endpoint": endpoint,
-            "type": "image-to-video" if is_i2v else "text-to-video",
-            "cost_per_sec": cost,
-            "cost_5sec": round(cost * 5, 2),
+            "type": _classify_type(endpoint),
+            "cost_per_sec": rate,
+            "cost_5sec": round(rate * 5, 2) if rate is not None else None,
+            "description": info.description if info else None,
+            "in_catalog": info is not None,
         }
+
+    # Then catalog entries that don't already have an alias
+    aliased_endpoints = set(ALIASES.values())
+    for m in catalog:
+        if m.endpoint in aliased_endpoints:
+            continue
+        if video_only and not m.is_video:
+            continue
+        rate = cost_per_sec(m.endpoint)
+        result[m.endpoint] = {
+            "endpoint": m.endpoint,
+            "type": _classify_type(m.endpoint),
+            "cost_per_sec": rate,
+            "cost_5sec": round(rate * 5, 2) if rate is not None else None,
+            "description": m.description,
+            "in_catalog": True,
+        }
+
     return result

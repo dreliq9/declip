@@ -2,6 +2,37 @@
 
 ---
 
+## Unreleased — "Live Catalog"
+
+Replaces the hardcoded `MODELS` dict in `generate.py` with a live fetch from `fal.ai/explore/models`. fal does not publish a model-listing API, so this scrapes the explore page (one stable regex against the card markup) and caches to disk.
+
+### What changed
+
+- **New `src/declip/fetch_models.py`** — single source of truth. Owns `ALIASES`, `MODEL_COST_PER_SEC` (now keyed by canonical endpoint), `fetch_models()`, `resolve_endpoint()`, `cost_per_sec()`, `to_image_to_video()`, `cache_status()`. Fallback chain: live fetch → cached (any age) → bundled defaults. Cache at `~/.cache/declip/fal_models.json`, 24h TTL. Path overridable via `DECLIP_CACHE_DIR` env var. No new dependencies — uses stdlib `urllib` + `re` + `html`.
+- **`generate.py` refactored** — imports from `fetch_models`, drops local `MODELS` / `MODEL_COST_PER_SEC` dicts. `generate_video()` resolves aliases via `resolve_endpoint()` and now uses generic path-rewrite (`/text-to-video` → `/image-to-video`) for image-to-video auto-switch instead of the alias-suffix hack — works for raw endpoints too.
+- **`list_models()` updated** — returns the live catalog merged with curated aliases. New args: `force_refresh: bool`, `video_only: bool` (default True). Adds `description` and `in_catalog` fields per entry. Type field now distinguishes `text-to-video / image-to-video / video-to-video / reference-to-video / first-last-frame-to-video / video`.
+- **New MCP tool `declip_refresh_models`** — forces a cache refresh, reports before/after status. Useful when a new model is announced.
+- **`declip_models` extended** — adds `filter_substring`, `force_refresh`, `include_non_video` args. Cost-per-second now nullable for catalog entries without a curated price.
+
+### Aliases now available
+
+Adds Veo 3.1 (`veo-3.1`, `veo-3.1-fast`) and Sora 2 (`sora-2`, `sora-2-pro`). Existing aliases (`kling-3*`, `kling-2.6*`, `wan-2.5*`, `wan-2.6*`, `ltx`, `luma`, `luma-flash`, `veo-3`) all preserved including `-i2v` siblings — pre-v0.9 batch specs keep working.
+
+### Stale endpoints fixed
+
+- `ltx`: `fal-ai/ltx-video` → `fal-ai/ltx-video-v097` (current canonical name).
+
+### Out of scope (follow-up)
+
+- The catalog is read-only. Triggering a generation against a brand-new endpoint discovered via fetch will work, but model-specific args (resolution, duration limits, audio toggle) are still hardcoded for kling/wan in `generate_video()`. Per-model arg schemas would need their own fetch.
+- The bundled fallback list ships with what the registry looked like when this was written. If both live fetch and cache are unavailable on first install, only those ~18 endpoints are visible.
+
+### Dependencies
+
+- Added missing `edge-tts>=7.0` (was imported at runtime but missing from `pyproject.toml`).
+
+---
+
 ## v0.8.0 — 2026-04-16 — "Structured Quick Tools"
 
 Adds Pydantic structured outputs to the four `quick_tools` MCP tools — `declip_probe`, `declip_trim`, `declip_concat`, `declip_thumbnail`. FastMCP now serializes each result into both `content` (the same human-readable text via `__str__`) AND `structuredContent` (typed JSON). Agents can read `result.duration_seconds`, `result.file_size_bytes`, etc. directly without parsing the formatted string.

@@ -20,6 +20,7 @@ dependencies = [
     "faster-whisper>=1.0",
     "watchdog>=4.0",
     "fal-client>=0.13",
+    "edge-tts>=7.0",
 ]
 
 [project.scripts]

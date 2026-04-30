@@ -107,29 +107,79 @@ def register(mcp: FastMCP) -> None:
         estimate_model: str = "",
         estimate_duration: int = 5,
         estimate_count: int = 1,
+        filter_substring: str = "",
+        force_refresh: bool = False,
+        include_non_video: bool = False,
     ) -> str:
-        """List AI video generation models with pricing. Optionally estimate cost for a specific model.
+        """List AI video generation models from the live fal.ai catalog with pricing.
 
-        Call with no args to see all models and pricing. Set estimate_model to
-        get a cost estimate for a specific generation job.
+        The catalog is fetched from fal.ai/explore/models and cached for 24h. By
+        default lists video-output models only. Cost-per-second is None for models
+        without a curated price entry — verify on fal.ai/pricing before billing-critical use.
 
         Args:
-            estimate_model: If set, estimate cost for this model instead of listing all
-            estimate_duration: Duration in seconds per clip (for estimates)
-            estimate_count: Number of clips (for estimates)
+            estimate_model: If set, estimate cost for this model and skip the listing.
+            estimate_duration: Duration in seconds per clip (for estimates).
+            estimate_count: Number of clips (for estimates).
+            filter_substring: If set, only show models whose endpoint or alias contains this string.
+            force_refresh: Refetch the catalog now, bypassing the 24h cache.
+            include_non_video: Include image / audio / utility models too.
         """
         if estimate_model:
             from declip.generate import estimate_cost
             result = estimate_cost(model=estimate_model, duration=estimate_duration, count=estimate_count)
             return (f"Model: {result['model']}\n"
+                    f"Endpoint: {result['endpoint']}\n"
                     f"Duration: {result['duration_sec']}s x {result['clips']} clip(s)\n"
                     f"Per clip: ${result['cost_per_clip']:.3f}\n"
                     f"Total: ${result['total_cost']:.2f}")
 
         from declip.generate import list_models
-        result = list_models()
-        lines = []
+        result = list_models(force_refresh=force_refresh, video_only=not include_non_video)
+        if filter_substring:
+            needle = filter_substring.lower()
+            result = {
+                name: info for name, info in result.items()
+                if needle in name.lower() or needle in info["endpoint"].lower()
+            }
+
+        lines = [f"{len(result)} model(s):"]
         for name, info in result.items():
-            type_tag = "i2v" if info["type"] == "image-to-video" else "t2v"
-            lines.append(f"{name}: {type_tag}, ${info['cost_per_sec']:.3f}/sec (${info['cost_5sec']:.2f}/5s)")
+            type_short = {
+                "text-to-video": "t2v",
+                "image-to-video": "i2v",
+                "video-to-video": "v2v",
+                "reference-to-video": "r2v",
+                "first-last-frame-to-video": "flf",
+            }.get(info["type"], "vid")
+            cost = info["cost_per_sec"]
+            cost_str = f"${cost:.3f}/sec" if cost is not None else "$?/sec"
+            line = f"  {name}: {type_short}, {cost_str}"
+            if info.get("description"):
+                line += f"  — {info['description'][:60]}"
+            lines.append(line)
         return "\n".join(lines)
+
+    @mcp.tool()
+    def declip_refresh_models(force: bool = True) -> str:
+        """Refresh the local fal.ai model cache.
+
+        Triggers an immediate fetch from fal.ai/explore/models and writes
+        ~/.cache/declip/fal_models.json. Reports cache status before and after.
+
+        Args:
+            force: If True (default), refetch even if cache is fresh.
+        """
+        from declip.fetch_models import cache_status, fetch_models
+
+        before = cache_status()
+        models = fetch_models(force_refresh=force)
+        after = cache_status()
+
+        videos = [m for m in models if m.is_video]
+        return (
+            f"Cache: {after.get('path')}\n"
+            f"Before: {'cached, age=' + str(before['age_seconds']) + 's' if before.get('cached') else 'no cache'}\n"
+            f"After: {'cached, age=' + str(after['age_seconds']) + 's, fresh=' + str(after['fresh']) if after.get('cached') else 'fetch failed - using bundled fallback'}\n"
+            f"Models: {len(models)} total, {len(videos)} video"
+        )
