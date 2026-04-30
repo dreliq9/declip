@@ -1251,5 +1251,134 @@ def color_grade(ctx, input_file, temperature, auto_levels,
     out.emit("complete", f"  {msg}")
 
 
+# ---------------------------------------------------------------------------
+# Workflow commands — high-level pipelines (see declip.workflows)
+# ---------------------------------------------------------------------------
+
+@main.group()
+def workflow():
+    """High-level workflows that orchestrate declip primitives."""
+    pass
+
+
+def _emit_workflow_result(ctx, result):
+    out: OutputManager = ctx.obj["out"]
+    if out.json_mode:
+        out._out(result.model_dump_json())
+    else:
+        out._out(str(result))
+    if not result.success:
+        sys.exit(1)
+
+
+@workflow.command(name="ingest")
+@click.argument("input_path", type=click.Path(exists=True))
+@click.option("--output", "-o", "output_path", default=None, help="Output path")
+@click.option("--target", default="-14", help="Loudnorm target (-14, youtube, tiktok, podcast, broadcast)")
+@click.option("--grade", is_flag=True, help="Apply neutral auto-grade")
+@click.pass_context
+def workflow_ingest(ctx, input_path, output_path, target, grade):
+    """Probe + loudnorm + optional auto-grade."""
+    from declip.workflows import ingest as ingest_wf
+    result = ingest_wf.run(input_path=input_path, output_path=output_path,
+                           target=target, grade=grade)
+    _emit_workflow_result(ctx, result)
+
+
+@workflow.command(name="cutdown")
+@click.argument("input_path", type=click.Path(exists=True))
+@click.option("--output", "-o", "output_path", default=None, help="Output path")
+@click.option("--target", "target_seconds", default=60.0, type=float, help="Target highlight duration (seconds)")
+@click.option("--transition", default="dissolve", help="Transition between clips")
+@click.option("--crossfade", "crossfade_duration", default=0.5, type=float, help="Crossfade duration (seconds)")
+@click.option("--segment-min", default=3.0, type=float, help="Minimum segment length to consider")
+@click.option("--segment-max", default=10.0, type=float, help="Maximum segment length per clip")
+@click.option("--scene-threshold", default=27.0, type=float, help="PySceneDetect threshold")
+@click.pass_context
+def workflow_cutdown(ctx, input_path, output_path, target_seconds, transition,
+                     crossfade_duration, segment_min, segment_max, scene_threshold):
+    """Long source → short highlight reel via scene/silence detect."""
+    from declip.workflows import cutdown as cutdown_wf
+    result = cutdown_wf.run(
+        input_path=input_path, output_path=output_path,
+        target_seconds=target_seconds, transition=transition,
+        crossfade_duration=crossfade_duration,
+        segment_min=segment_min, segment_max=segment_max,
+        scene_threshold=scene_threshold,
+    )
+    _emit_workflow_result(ctx, result)
+
+
+@workflow.command(name="speech-cleanup")
+@click.argument("input_path", type=click.Path(exists=True))
+@click.option("--output", "-o", "output_path", default=None, help="Output path")
+@click.option("--gap", default=0.5, type=float, help="Drop silent gaps longer than this (seconds)")
+@click.option("--pad", default=0.1, type=float, help="Pad each kept segment with this much head/tail")
+@click.option("--burn-captions", is_flag=True, help="Burn captions into the output")
+@click.option("--whisper-model", default="base", help="faster-whisper model size")
+@click.pass_context
+def workflow_speech_cleanup(ctx, input_path, output_path, gap, pad, burn_captions, whisper_model):
+    """Talking-head jump-cut edit (drop silences, optional captions)."""
+    from declip.workflows import speech_cleanup as speech_cleanup_wf
+    result = speech_cleanup_wf.run(
+        input_path=input_path, output_path=output_path,
+        gap=gap, pad=pad, burn_captions=burn_captions, whisper_model=whisper_model,
+    )
+    _emit_workflow_result(ctx, result)
+
+
+@workflow.command(name="beat-sync")
+@click.argument("video_path", type=click.Path(exists=True))
+@click.argument("music_path", type=click.Path(exists=True))
+@click.option("--output", "-o", "output_path", default=None, help="Output path")
+@click.option("--stride", default=1, type=int, help="Cut on every Nth beat")
+@click.option("--window", default=None, type=float, help="Clip window length")
+@click.pass_context
+def workflow_beat_sync(ctx, video_path, music_path, output_path, stride, window):
+    """Cut video on the beats of a music track."""
+    from declip.workflows import beat_sync as beat_sync_wf
+    result = beat_sync_wf.run(
+        video_path=video_path, music_path=music_path, output_path=output_path,
+        stride=stride, window=window,
+    )
+    _emit_workflow_result(ctx, result)
+
+
+@workflow.command(name="vertical")
+@click.argument("input_path", type=click.Path(exists=True))
+@click.option("--output", "-o", "output_path", default=None, help="Output path")
+@click.option("--mode", default="crop", type=click.Choice(["crop", "pad", "blur-pad"]), help="Reframe mode")
+@click.option("--width", default=1080, type=int, help="Target width")
+@click.option("--height", default=1920, type=int, help="Target height")
+@click.option("--bg", "background", default="#000000", help="Pad-mode background colour")
+@click.option("--target", default="-14", help="Loudnorm target")
+@click.option("--force", is_flag=True, help="Reframe even if source is already vertical")
+@click.pass_context
+def workflow_vertical(ctx, input_path, output_path, mode, width, height, background, target, force):
+    """Reframe to 9:16 (TikTok / Reels / Shorts)."""
+    from declip.workflows import vertical as vertical_wf
+    result = vertical_wf.run(
+        input_path=input_path, output_path=output_path, mode=mode,
+        width=width, height=height, background=background, target=target, force=force,
+    )
+    _emit_workflow_result(ctx, result)
+
+
+@workflow.command(name="review")
+@click.argument("input_path", type=click.Path(exists=True))
+@click.option("--output", "-o", "output_dir", default=None, help="Report directory")
+@click.option("--frames", "frame_count", default=16, type=int, help="Sparse-frame count")
+@click.option("--scene-threshold", default=27.0, type=float, help="Scene-detect threshold")
+@click.pass_context
+def workflow_review(ctx, input_path, output_dir, frame_count, scene_threshold):
+    """Phase 0–3 QA report pack for a rendered video."""
+    from declip.workflows import review as review_wf
+    result = review_wf.run(
+        input_path=input_path, output_dir=output_dir,
+        frame_count=frame_count, scene_threshold=scene_threshold,
+    )
+    _emit_workflow_result(ctx, result)
+
+
 if __name__ == "__main__":
     main()
