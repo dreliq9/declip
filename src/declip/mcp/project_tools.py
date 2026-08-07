@@ -17,8 +17,6 @@ def register(mcp: FastMCP) -> None:
         Args:
             directory: Directory to create the project file in
         """
-        from declip.schema import Project
-
         out_path = Path(directory) / "project.json"
         if out_path.exists():
             return f"Error: {out_path} already exists"
@@ -35,6 +33,46 @@ def register(mcp: FastMCP) -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(template, indent=2))
         return f"Created {out_path}"
+
+    @mcp.tool()
+    def declip_project_from_clip_plan(
+        manifest_path: str,
+        project_path: str,
+        output_path: str = "output.mp4",
+        width: int = 1920,
+        height: int = 1080,
+        fps: int = 30,
+        transition: str = "none",
+        transition_duration: float = 0.5,
+        verify_hashes: bool = True,
+        overwrite: bool = False,
+    ) -> str:
+        """Create a native Declip project from a youtube-mcp materialized clip plan.
+
+        The youtube-mcp assets are already source-trimmed. This tool preserves
+        manifest order, verifies each SHA-256 by default, creates one native Declip
+        timeline track, and writes a `.sources.json` provenance sidecar. It does
+        not render; call `declip_render` after reviewing the generated project.
+        """
+        from declip.clip_plan import ClipPlanImportError, project_from_materialized_clip_plan
+
+        try:
+            result = project_from_materialized_clip_plan(
+                manifest_path,
+                project_path,
+                output_path=output_path,
+                resolution=(width, height),
+                fps=fps,
+                transition=transition,
+                transition_duration=transition_duration,
+                verify_hashes=verify_hashes,
+                overwrite=overwrite,
+            )
+        except ClipPlanImportError as exc:
+            return f"Clip-plan import error: {exc}"
+        except Exception as exc:
+            return f"Clip-plan import failed: {exc}"
+        return json.dumps(result, indent=2)
 
     @mcp.tool()
     def declip_validate(project_file: str) -> str:
@@ -87,13 +125,6 @@ def register(mcp: FastMCP) -> None:
         """Render a declip project file to video.
 
         Auto-selects FFmpeg (single-track) or MLT (multi-track) backend.
-
-        Args:
-            project_file: Path to the project.json file
-            backend: "auto", "ffmpeg", or "mlt"
-            output_path: Override the output file path
-            preset: Output preset name (youtube-1080p, instagram-reel, prores-master, draft, web-vp9, youtube-4k)
-            variables: JSON string of template variables, e.g. '{"title": "Episode 1"}'
         """
         from declip.schema import Project, PRESETS, PRESET_RESOLUTIONS
         from declip.backends import ffmpeg as ffmpeg_backend
@@ -116,10 +147,8 @@ def register(mcp: FastMCP) -> None:
         if output_path:
             project.output.path = str(Path(output_path).resolve())
 
-        # Resolve any "auto" start values to actual timestamps
         project.resolve_auto_starts(project_dir)
 
-        # Estimate duration (all starts are resolved to floats at this point)
         max_end = 0.0
         for track in project.timeline.tracks:
             for clip in track.clips:
@@ -152,16 +181,11 @@ def register(mcp: FastMCP) -> None:
                 out_path = str(project_dir / out_path)
             size = Path(out_path).stat().st_size if Path(out_path).exists() else 0
             return f"Rendered successfully via {chosen}\nOutput: {out_path} ({size / 1024 / 1024:.1f} MB)"
-        else:
-            return f"Render failed via {chosen}. Check stderr for details."
+        return f"Render failed via {chosen}. Check stderr for details."
 
     @mcp.tool()
     def declip_export_mlt(project_file: str) -> str:
-        """Export a declip project as MLT XML (without rendering).
-
-        Args:
-            project_file: Path to the project.json file
-        """
+        """Export a declip project as MLT XML (without rendering)."""
         from declip.schema import Project
         from declip.backends import mlt as mlt_backend
 
@@ -187,11 +211,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def declip_assets(project_file: str) -> str:
-        """List all assets referenced in a project with status, duration, and size.
-
-        Args:
-            project_file: Path to the project.json file
-        """
+        """List all assets referenced in a project with status, duration, and size."""
         from declip.schema import Project
         from declip.probe import probe as probe_file
 
