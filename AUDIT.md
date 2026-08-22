@@ -20,7 +20,7 @@ FFmpeg / MLT compiler
 Execution backend
 ```
 
-MCP is an adapter, not the architecture center. Media semantics belong beneath transport layers so the same implementation can be used by MCP, CLI, workflows, and direct Python callers.
+MCP and CLI are adapters, not architecture centers. Media semantics belong beneath transport layers so the same implementation can be used by MCP, CLI, workflows, and direct Python callers.
 
 See `docs/architecture.md` for the boundary contract.
 
@@ -55,7 +55,7 @@ The following items from the old audit are no longer roadmap work:
 
 `compilers/render_plan.py` now owns authoring normalization. It deep-copies projects, resolves `start: "auto"`, makes clip durations explicit, and records duration-probe fallbacks as diagnostics.
 
-FFmpeg and MLT compilation moved into `compilers/`; backend modules are now execution adapters. Backend-specific filter lowering lives in `filters/`.
+FFmpeg and MLT compilation moved into `compilers/`; backend modules are execution adapters. Backend-specific filter lowering lives in `filters/`.
 
 The legacy `Project.resolve_auto_starts()` API delegates to the canonical render-plan logic instead of maintaining a second timeline algorithm.
 
@@ -72,7 +72,7 @@ The hardening pass fixes several silent semantic losses:
 - dedicated timeline audio routes away from FFmpeg instead of being dropped
 - arbitrary manual gaps/overlaps route away from the concat/xfade compiler instead of being collapsed
 
-### MCP implementation ownership removed
+### Adapter implementation ownership removed
 
 The largest MCP implementation modules are now thin adapters:
 
@@ -82,9 +82,22 @@ The largest MCP implementation modules are now thin adapters:
 - `mcp/project_tools.py` → reusable `declip.project_ops`
 - advanced batch rendering → `declip.project_ops.batch_render`
 
+The CLI was similarly consolidated. `cli_adapter.py` owns the Click command surface and delegates project preparation, quick operations, processing, generation, analysis, and workflows to core modules. `declip.cli:main` remains a compatibility shim, and the package script points directly to `declip.cli_adapter:main`.
+
+Boundary tests enforce that thin MCP/CLI adapters do not import `subprocess` or `tempfile`, and they enumerate the preserved CLI command/workflow surface.
+
 The move exposed and fixed additional bugs: basic+advanced color grading no longer performs an unused extra encode; image-overlay sizing uses the probed main-video width; freeze-frame generation no longer limits the final output to one frame; storyboard narration is explicitly mixed rather than represented as an FFmpeg timeline audio track that the old backend ignored.
 
-Analysis/media/generation MCP modules are mostly formatting adapters around existing core `analyze.py`, `ops.py`, `generate.py`, and `fetch_models.py` implementations.
+### Production-pipeline hardening
+
+The extracted production pipeline also received correctness fixes:
+
+- center-crop now scales to cover before cropping, avoiding invalid crop widths on narrow sources
+- platform export handles video without audio instead of always applying loudness filters
+- storyboard accepts FFmpeg-style `fade` as schema `dissolve` and validates transitions before project construction
+- TTS provider calls work from synchronous callers even when an event loop is already active
+- missing or stalled `ffprobe` no longer turns a successful TTS generation into a pipeline failure
+- storyboard narration/music mixing handles source videos with no existing audio stream
 
 ### Typed core results
 
@@ -112,23 +125,22 @@ The branch adds regression coverage for:
 - dedicated-audio backend selection
 - MLT normalization
 - transport-neutral result compatibility
-- adapter/core import boundaries
+- MCP/CLI adapter boundaries and CLI command-surface preservation
 - single-pass combined color grading
 - project validation of filter assets
-- ASS generation and storyboard transition aliases
+- ASS generation, transition aliases, and reframe filter construction
 
-A local compiler harness passed 12 focused tests during the initial compiler extraction. The repository itself has no configured CI runner, so the expanded committed suite still needs to be run in a checkout with the project dependencies and external media tools installed.
+A local compiler harness passed 12 focused tests during the initial compiler extraction. The repository itself has no configured CI runner, and this environment cannot clone the branch over git/network transport, so the expanded committed suite has not been executed end-to-end from the GitHub checkout. That remains the main verification gap before merge.
 
 ## Remaining hardening work
 
-The architecture is now pointed in the intended direction. Remaining work is narrower:
+The architecture consolidation is complete enough that the remaining work is narrower and evidence-driven:
 
-1. **CLI de-duplication.** `cli.py` still contains legacy command implementations that overlap the new `quick`, `edit`, and `project_ops` capability APIs. Migrate commands without changing the CLI surface.
-2. **Richer typed results.** Analysis, media, generation, edit, and project operations still use human-readable strings in several core paths. Add domain-specific result models where agents benefit from structured fields.
-3. **Synthetic-media integration tests.** Run end-to-end renders against generated fixtures to validate actual FFmpeg graphs, not only command construction. Add MLT integration coverage where `melt` is available.
-4. **MLT transition audit.** Validate same-track and multi-track transition semantics independently; compiler isolation now makes this tractable.
-5. **Speed/duration semantics.** The v1 schema still has an ambiguity between source span, explicit timeline duration, and speed filters. Resolve this in the normalized IR before expanding retiming features.
-6. **Generation argument schemas.** Live model discovery exists, but model-specific fal.ai parameter schemas are still curated/hardcoded for selected families.
+1. **Synthetic-media integration tests.** Run the committed suite in a real checkout, then add end-to-end renders against generated fixtures to validate actual FFmpeg graphs. Add MLT integration coverage where `melt` is available.
+2. **MLT transition audit.** Validate same-track and multi-track transition semantics independently; compiler isolation now makes this tractable.
+3. **Richer typed results.** Analysis, media, generation, edit, and project operations still use human-readable strings in several core paths. Add domain-specific result models where agents benefit from structured fields.
+4. **Speed/duration semantics.** The v1 schema still has an ambiguity between source span, explicit timeline duration, and speed filters. Resolve this in the normalized IR before expanding retiming features.
+5. **Generation argument schemas.** Live model discovery exists, but model-specific fal.ai parameter schemas are still curated/hardcoded for selected families.
 
 ## Research items still genuinely deferred
 
@@ -140,4 +152,4 @@ The architecture is now pointed in the intended direction. Remaining work is nar
 
 ## Priority
 
-The next engineering pass should be CLI de-duplication plus executable synthetic-media integration tests. Broad feature accumulation can resume after those close the remaining duplicate execution paths and establish end-to-end render confidence.
+The next engineering pass should begin with executable synthetic-media integration tests and the MLT transition audit. Broad feature accumulation can resume after those establish end-to-end renderer confidence on top of the new boundaries.
