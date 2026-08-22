@@ -78,13 +78,33 @@ A backend should be small enough that most correctness can be tested without lau
 
 Neither thin adapter layer owns subprocess execution. Boundary tests enforce this invariant and enumerate the CLI command surface.
 
-## Backend selection
+## Backend capability contract
 
-Backend selection is fail-preserving rather than optimistic.
+Backend selection is fail-preserving rather than optimistic. Selection happens after normalization so both compilers inspect the same explicit timeline.
 
-FFmpeg is selected only when its compiler can preserve the project semantics. It currently accepts one sequential, unpositioned video track with clip audio. Dedicated timeline audio, arbitrary manual timeline gaps/overlaps, positioned clips, and multi-track composition route to MLT. A forced unsupported FFmpeg backend returns a compilation error instead of dropping or collapsing content.
+### FFmpeg
 
-Still-image inputs are explicitly looped by the FFmpeg compiler for their normalized clip duration.
+The FFmpeg compiler currently accepts one sequential, unpositioned video track with clip audio. It supports hard cuts and its declared xfade transitions, shared video/audio filters, reverse, freeze-frame, and per-clip watermarks. Still-image inputs are explicitly looped for the normalized clip duration.
+
+It rejects dedicated timeline audio, arbitrary manual timeline gaps/overlaps, positioned clips, multi-track composition, and other semantics it cannot preserve.
+
+### MLT
+
+The MLT compiler is deliberately conservative. It supports finite multi-track timelines, explicit gaps, dedicated audio tracks, and its explicitly lowered filter subset. It rejects semantics that the old implementation previously approximated or silently lost, including:
+
+- `transition_in` and same-track overlap until a real two-track MLT transition lowering exists
+- positioned clips until position and sizing are represented explicitly in the IR
+- clip opacity, reverse, and freeze-frame where no faithful MLT lowering exists yet
+- unsupported clip/audio filters
+- speech ducking requests that have not been lowered
+
+This restriction is intentional. MLT transitions combine frames from distinct A/B tracks; emitting a transition with identical `a_track` and `b_track` does not preserve an adjacent same-track dissolve. The compiler therefore fails rather than emitting semantically false XML. Current MLT documentation demonstrates transitions across separate tracks. 
+
+### No-compatible-backend behavior
+
+`project_ops.prepare_project()` checks both capability matrices against the normalized project. If neither backend can preserve the requested semantics, `auto` returns an explicit error instead of selecting the least-wrong renderer.
+
+Forced backend selection is subject to the same rule.
 
 ## Compatibility policy
 
@@ -94,7 +114,7 @@ Existing MCP tool names and the CLI command/flag surface are preserved while imp
 
 ## Testing policy
 
-Compiler correctness is primarily unit-testable. Regression tests inspect generated argv/XML, transport-neutral contracts, and adapter boundaries before integration tests invoke FFmpeg/MLT.
+Compiler correctness is primarily unit-testable. Regression tests inspect generated argv/XML, transport-neutral contracts, adapter boundaries, and negative capability cases before integration tests invoke FFmpeg/MLT.
 
 Required regression categories include:
 
@@ -106,9 +126,11 @@ Required regression categories include:
 - reverse video + audio parity
 - freeze-frame behavior
 - backend-selection preservation of dedicated audio tracks
+- explicit rejection when neither backend can preserve semantics
+- MLT rejection of invalid same-track transition lowering
 - transport-neutral result imports
 - absence of subprocess ownership in thin MCP/CLI adapters
 - CLI command-surface preservation
 - production reframe and transition normalization
 
-Synthetic-media integration tests remain the required second layer for actual render verification.
+Synthetic-media integration tests are the second layer. The repository contains executable FFmpeg integration fixtures for concat, dissolve timing, still images, and multi-clip watermarks, plus an MLT smoke render that runs when `melt`, FFmpeg, and ffprobe are installed. These tests skip cleanly when the required external renderer is unavailable.
