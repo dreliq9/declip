@@ -99,10 +99,21 @@ def build_render_plan(
     Duration probing is injectable so compilers can be unit-tested without media
     files. Probe failures are preserved as warnings instead of disappearing into
     backend-specific magic constants.
+
+    ``Project.includes`` remains in the public v1 schema for compatibility, but no
+    compiler currently lowers nested project includes. Refusing them here prevents
+    a render from silently omitting declared project content.
     """
 
     project_dir = Path(project_dir)
     normalized = project.model_copy(deep=True)
+    if normalized.includes:
+        joined = ", ".join(normalized.includes)
+        raise RenderPlanError(
+            "Project includes are declared but no compiler currently lowers them; "
+            f"refusing to ignore: {joined}"
+        )
+
     resolver = duration_resolver or _default_duration_resolver
     warnings: list[PlanWarning] = []
 
