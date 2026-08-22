@@ -102,8 +102,9 @@ def prepare_project(
     preset: str | None = None,
     variables: dict[str, str] | None = None,
 ) -> PreparedProject:
-    """Load, configure, normalize, and select a backend without rendering."""
+    """Load, configure, normalize, and select a preserving backend."""
     from declip.backends import ffmpeg as ffmpeg_backend
+    from declip.compilers import mlt as mlt_compiler
 
     if backend not in {"auto", "ffmpeg", "mlt"}:
         raise ValueError("backend must be auto, ffmpeg, or mlt")
@@ -117,17 +118,38 @@ def prepare_project(
         project.output.path = str(Path(output_path).resolve())
 
     plan = build_render_plan(project, project_dir)
+    normalized = plan.project
+    ffmpeg_ok = ffmpeg_backend.can_handle(normalized)
+    mlt_reasons = mlt_compiler.unsupported_reasons(normalized)
+    mlt_ok = not mlt_reasons
+
     if backend == "auto":
-        chosen = "ffmpeg" if ffmpeg_backend.can_handle(project) else "mlt"
+        if ffmpeg_ok:
+            chosen = "ffmpeg"
+        elif mlt_ok:
+            chosen = "mlt"
+        else:
+            detail = "; ".join(mlt_reasons)
+            raise ValueError(
+                "No backend can preserve this project. "
+                f"FFmpeg requires one sequential unpositioned video track with no dedicated audio; "
+                f"MLT: {detail}"
+            )
+    elif backend == "ffmpeg":
+        if not ffmpeg_ok:
+            raise ValueError(
+                "FFmpeg backend cannot preserve this project; use backend='mlt' or 'auto'"
+            )
+        chosen = "ffmpeg"
     else:
-        chosen = backend
-    if chosen == "ffmpeg" and not ffmpeg_backend.can_handle(project):
-        raise ValueError(
-            "FFmpeg backend cannot preserve this project; use backend='mlt' or 'auto'"
-        )
+        if not mlt_ok:
+            raise ValueError(
+                "MLT backend cannot preserve this project: " + "; ".join(mlt_reasons)
+            )
+        chosen = "mlt"
 
     return PreparedProject(
-        project=project,
+        project=normalized,
         project_dir=project_dir,
         plan=plan,
         backend=chosen,
@@ -186,9 +208,9 @@ def export_mlt(project_file: str) -> str:
 
     try:
         project = Project.load(project_file)
+        return compile_to_string(project, Path(project_file).parent)
     except Exception as exc:
         return f"Error: {exc}"
-    return compile_to_string(project, Path(project_file).parent)
 
 
 def list_presets() -> str:
