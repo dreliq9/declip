@@ -148,11 +148,22 @@ def _compile_normalized(project: Project, project_dir: Path) -> ElementTree:
     root = Element("mlt")
     root.set("LC_NUMERIC", "C")
 
-    profile = SubElement(root, "profile")
-    add_property(profile, "width", str(width))
-    add_property(profile, "height", str(height))
-    add_property(profile, "frame_rate_num", str(fps))
-    add_property(profile, "frame_rate_den", "1")
+    # MLT profile fields are XML attributes, not <property> children.
+    SubElement(
+        root,
+        "profile",
+        description="Declip",
+        width=str(width),
+        height=str(height),
+        progressive="1",
+        sample_aspect_num="1",
+        sample_aspect_den="1",
+        display_aspect_num=str(width),
+        display_aspect_den=str(height),
+        frame_rate_num=str(fps),
+        frame_rate_den="1",
+        colorspace="709",
+    )
 
     background = SubElement(root, "producer", id="bg_color")
     add_property(background, "mlt_service", "color")
