@@ -136,6 +136,27 @@ def _frame_span(start_seconds: float, duration_seconds: float, fps: int) -> tupl
     return start, start + length - 1
 
 
+def _timeline_length_frames(project: Project, fps: int) -> int:
+    """Return a finite frame length for the normalized MLT graph."""
+    end_seconds = max(
+        (
+            float(clip.start) + float(clip.duration or 0.0)
+            for track in project.timeline.tracks
+            for clip in track.clips
+        ),
+        default=0.0,
+    )
+    for audio in project.timeline.audio:
+        if audio.duration is not None:
+            end_seconds = max(end_seconds, audio.start + audio.duration)
+        elif audio.trim_out is not None:
+            end_seconds = max(
+                end_seconds,
+                audio.start + max(0.0, audio.trim_out - audio.trim_in),
+            )
+    return max(1, seconds_to_frames(end_seconds, fps))
+
+
 def _build_producer(root: Element, asset: str, producer_id: str, project_dir: Path) -> str:
     producer = SubElement(root, "producer", id=producer_id)
     add_property(producer, "resource", resolve_asset(asset, project_dir))
@@ -149,6 +170,9 @@ def _compile_normalized(project: Project, project_dir: Path) -> ElementTree:
 
     fps = project.settings.fps
     width, height = project.settings.resolution
+    timeline_frames = _timeline_length_frames(project, fps)
+    timeline_out = timeline_frames - 1
+
     root = Element("mlt")
     root.set("LC_NUMERIC", "C")
 
@@ -172,7 +196,7 @@ def _compile_normalized(project: Project, project_dir: Path) -> ElementTree:
     background = SubElement(root, "producer", id="bg_color")
     add_property(background, "mlt_service", "color")
     add_property(background, "resource", project.settings.background)
-    add_property(background, "length", "999999")
+    add_property(background, "length", str(timeline_frames))
 
     producer_map: dict[str, str] = {}
     producer_index = 0
@@ -198,7 +222,12 @@ def _compile_normalized(project: Project, project_dir: Path) -> ElementTree:
         )
 
     background_playlist = SubElement(root, "playlist", id="playlist_bg")
-    SubElement(background_playlist, "entry", producer="bg_color")
+    SubElement(
+        background_playlist,
+        "entry",
+        producer="bg_color",
+        **{"in": "0", "out": str(timeline_out)},
+    )
     playlist_ids = ["playlist_bg"]
 
     for track in project.timeline.tracks:
@@ -248,8 +277,8 @@ def _compile_normalized(project: Project, project_dir: Path) -> ElementTree:
             entry.set("out", str(out_frame))
         add_audio_track_filters(entry, audio, fps)
 
-    tractor = SubElement(root, "tractor", id="main")
-    multitrack = SubElement(tractor, "multitrack")
+    tractor = SubElement(root, "tractor", id="main", **{"in": "0", "out": str(timeline_out)})
+    multitrack = SubElement(tractor, "multitrack", id="multitrack_main")
     for playlist_id in playlist_ids:
         SubElement(multitrack, "track", producer=playlist_id)
 
