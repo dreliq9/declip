@@ -28,10 +28,10 @@ declip = "declip.cli:main"
 declip-mcp = "declip.mcp.server:main"
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-cov",
-]
+analysis = ["scenedetect>=0.6.4"]
+vad = ["silero-vad>=6.2", "torch>=2.0"]
+full-analysis = ["scenedetect>=0.6.4", "silero-vad>=6.2", "torch>=2.0"]
+dev = ["pytest>=8.0", "pytest-cov"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
