@@ -4,20 +4,31 @@
 
 Declip is a media engine. MCP and CLI are adapters to that engine.
 
-No transport layer should own media semantics that another transport cannot reuse. A feature is complete only when its implementation is callable beneath MCP/CLI and its adapter is thin.
+No transport layer should own media semantics that another transport cannot reuse. A feature is complete when its implementation is callable beneath MCP/CLI and its adapter is thin.
 
 ## Layers
 
 ### 1. Schema and capability layer
 
-`schema.py`, `ops.py`, `analyze.py`, `generate.py`, `workflows/`, and `results.py` define user-facing media concepts and reusable operations.
+Core reusable modules define user-facing media concepts and operations:
+
+- `schema.py` — public project/timeline contract
+- `analyze.py` — media analysis
+- `ops.py` — shared low-level processing operations
+- `quick.py` — structured probe/trim/concat/thumbnail operations
+- `edit.py` — file-based editing capabilities
+- `project_ops.py` — project validation/render/export/asset operations
+- `generate.py` + `fetch_models.py` — AI generation capabilities and model discovery
+- `pipelines/` — end-to-end production pipelines
+- `workflows/` — reusable editing workflow recipes
+- `results.py` — transport-neutral result contracts
 
 Rules:
 
 - no MCP imports
 - no Click imports
-- structured inputs and structured return values where practical
-- subprocess details may exist in low-level operations, but transport formatting does not
+- structured inputs/results where they materially help callers
+- subprocess details may exist in low-level capabilities, but transport formatting and registration do not
 
 ### 2. Render-plan normalization
 
@@ -30,7 +41,7 @@ It owns:
 - recording duration-probe fallbacks as diagnostics
 - deep-copying rather than mutating caller-owned project objects
 
-A backend compiler must not invent its own fallback timeline math.
+A backend compiler must not invent its own fallback timeline math. The legacy mutating `Project.resolve_auto_starts()` method delegates to this layer for compatibility.
 
 ### 3. Filters
 
@@ -45,12 +56,13 @@ It does not execute processes and does not know about MCP/CLI output conventions
 Compilers own:
 
 - input option ordering
-- stream graph construction
+- stream graph/XML construction
 - transition lowering
 - watermark/overlay input mapping
 - codec/backend syntax
+- explicit capability rejection when a backend cannot preserve timeline semantics
 
-Compilers do not run FFmpeg or melt.
+Compilers do not perform the final FFmpeg or melt render.
 
 ### 5. Backends
 
@@ -60,34 +72,39 @@ A backend should be small enough that most correctness can be tested without lau
 
 ### 6. Adapters
 
-`cli.py` and `mcp/` validate transport-specific input, call core capabilities, and serialize results.
+`mcp/` validates MCP-specific inputs, calls core capabilities, and serializes results. The major edit, quick, project, and production-pipeline MCP modules are thin wrappers around core modules.
 
-They should not become alternative implementations of Declip features.
+`cli.py` is also an adapter by design, but it still contains legacy duplicate implementations. Removing that duplication is the next boundary cleanup; it should reuse the same core modules without changing command names or flags.
 
 ## Backend selection
 
 Backend selection is fail-preserving rather than optimistic.
 
-FFmpeg is selected only when its compiler can preserve the project semantics. Multi-track compositing, positioned tracks, and dedicated timeline audio currently route to MLT. A forced unsupported backend returns a compilation error instead of dropping content.
+FFmpeg is selected only when its compiler can preserve the project semantics. It currently accepts one sequential, unpositioned video track with clip audio. Dedicated timeline audio, arbitrary manual timeline gaps/overlaps, positioned clips, and multi-track composition route to MLT. A forced unsupported FFmpeg backend returns a compilation error instead of dropping or collapsing content.
+
+Still-image inputs are explicitly looped by the FFmpeg compiler for their normalized clip duration.
 
 ## Compatibility policy
 
 Existing public imports from `declip.backends.ffmpeg`, `declip.backends.mlt`, and `declip.mcp.types` remain available as compatibility re-exports while implementation ownership moves downward.
 
-This lets architecture improve without making CLI/MCP consumers migrate in lockstep.
+Existing MCP tool names and principal argument signatures are preserved while implementations move to reusable capability modules.
 
 ## Testing policy
 
-Compiler correctness is primarily unit-testable. Regression tests should inspect generated argv/XML for semantic invariants before integration tests invoke FFmpeg/MLT.
+Compiler correctness is primarily unit-testable. Regression tests inspect generated argv/XML and adapter boundaries before integration tests invoke FFmpeg/MLT.
 
-Required regression categories:
+Required regression categories include:
 
 - input option scoping (`-ss`/`-t` before the intended `-i`)
 - auto-start and transition overlap normalization
+- explicit timeline gap/overlap routing
+- still-image duration handling
 - multi-clip watermarks
 - reverse video + audio parity
-- freeze-frame behavior in single and multi-clip projects
+- freeze-frame behavior
 - backend-selection preservation of dedicated audio tracks
 - transport-neutral result imports
+- absence of subprocess ownership in thin MCP adapters
 
-Synthetic-media integration tests are useful as a second layer, but compiler unit tests are the first defense against silent render regressions.
+Synthetic-media integration tests remain the required second layer for actual render verification.
