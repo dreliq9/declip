@@ -12,10 +12,12 @@ import subprocess
 from pathlib import Path
 
 from declip.compilers.ffmpeg import CompilationError, can_handle, compile_commands, compile_project, resolve_output_path
+from declip.compilers.render_plan import RenderPlanError
 from declip.output import OutputManager
 from declip.schema import Project
 
 __all__ = ["can_handle", "compile_commands", "render"]
+
 
 def _parse_ffmpeg_progress(line: str, total_duration: float | None) -> float | None:
     match = re.search(r"time=(\d+):(\d+):(\d+\.\d+)", line)
@@ -24,13 +26,14 @@ def _parse_ffmpeg_progress(line: str, total_duration: float | None) -> float | N
         return min((hours * 3600 + minutes * 60 + seconds) / total_duration, 1.0)
     return None
 
+
 def render(project: Project, project_dir: Path, out: OutputManager, total_duration: float | None = None) -> bool:
     if not shutil.which("ffmpeg"):
         out.error("render", "ffmpeg not found in PATH")
         return False
     try:
         compiled = compile_project(project, project_dir)
-    except CompilationError as exc:
+    except (CompilationError, RenderPlanError) as exc:
         out.error("compile", str(exc))
         return False
     for warning in compiled.plan.warnings:
