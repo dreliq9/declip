@@ -22,7 +22,7 @@ Execution backend
 
 MCP and CLI are adapters, not architecture centers. Media semantics belong beneath transport layers so the same implementation can be used by MCP, CLI, workflows, and direct Python callers.
 
-See `docs/architecture.md` for the boundary contract.
+See `docs/architecture.md` for the boundary contract and backend capability matrix.
 
 ## Capabilities already implemented
 
@@ -53,7 +53,7 @@ The following items from the old audit are no longer roadmap work:
 
 ### Render-plan and compiler boundary
 
-`compilers/render_plan.py` now owns authoring normalization. It deep-copies projects, resolves `start: "auto"`, makes clip durations explicit, and records duration-probe fallbacks as diagnostics.
+`compilers/render_plan.py` owns authoring normalization. It deep-copies projects, resolves `start: "auto"`, makes clip durations explicit, and records duration-probe fallbacks as diagnostics.
 
 FFmpeg and MLT compilation moved into `compilers/`; backend modules are execution adapters. Backend-specific filter lowering lives in `filters/`.
 
@@ -72,9 +72,24 @@ The hardening pass fixes several silent semantic losses:
 - dedicated timeline audio routes away from FFmpeg instead of being dropped
 - arbitrary manual gaps/overlaps route away from the concat/xfade compiler instead of being collapsed
 
+### MLT correctness and capability audit
+
+The MLT compiler was audited against MLT's current transition model. MLT transitions combine two distinct tracks; the old Declip compiler emitted same-track transitions with identical `a_track` and `b_track`, which did not faithfully represent adjacent-clip dissolves.
+
+The compiler is now fail-preserving instead of falsely permissive:
+
+- `transition_in` and same-track overlap are rejected until a real two-track transition lowering exists
+- explicit clip duration is reflected in finite playlist entry spans
+- timeline gaps are preserved
+- dedicated audio is mixed as a distinct track
+- reverse, freeze-frame, positioned clips, opacity, unsupported filters, and unlowered speech ducking are rejected explicitly
+- project includes are not silently ignored
+
+`project_ops.prepare_project()` now checks both normalized backend capability matrices. `auto` errors when neither backend can preserve the project instead of selecting a renderer that would drop semantics.
+
 ### Adapter implementation ownership removed
 
-The largest MCP implementation modules are now thin adapters:
+The largest MCP implementation modules are thin adapters:
 
 - `mcp/edit_tools.py` → reusable `declip.edit`
 - `mcp/quick_tools.py` → reusable `declip.quick`
@@ -84,7 +99,7 @@ The largest MCP implementation modules are now thin adapters:
 
 The CLI was similarly consolidated. `cli_adapter.py` owns the Click command surface and delegates project preparation, quick operations, processing, generation, analysis, and workflows to core modules. `declip.cli:main` remains a compatibility shim, and the package script points directly to `declip.cli_adapter:main`.
 
-Boundary tests enforce that thin MCP/CLI adapters do not import `subprocess` or `tempfile`, and they enumerate the preserved CLI command/workflow surface.
+Boundary tests enforce that thin MCP/CLI adapters do not own subprocess execution and enumerate the preserved CLI command/workflow surface.
 
 The move exposed and fixed additional bugs: basic+advanced color grading no longer performs an unused extra encode; image-overlay sizing uses the probed main-video width; freeze-frame generation no longer limits the final output to one frame; storyboard narration is explicitly mixed rather than represented as an FFmpeg timeline audio track that the old backend ignored.
 
@@ -92,7 +107,7 @@ The move exposed and fixed additional bugs: basic+advanced color grading no long
 
 The extracted production pipeline also received correctness fixes:
 
-- center-crop now scales to cover before cropping, avoiding invalid crop widths on narrow sources
+- center-crop scales to cover before cropping, avoiding invalid crop widths on narrow sources
 - platform export handles video without audio instead of always applying loudness filters
 - storyboard accepts FFmpeg-style `fade` as schema `dissolve` and validates transitions before project construction
 - TTS provider calls work from synchronous callers even when an event loop is already active
@@ -101,7 +116,7 @@ The extracted production pipeline also received correctness fixes:
 
 ### Typed core results
 
-Probe/trim/concat/thumbnail result models now live in `declip.results`; `declip.mcp.types` re-exports them for compatibility. Production pipelines return a transport-neutral `PipelineResult` internally while MCP preserves the previous human-readable text surface.
+Probe/trim/concat/thumbnail result models live in `declip.results`; `declip.mcp.types` re-exports them for compatibility. Production pipelines return a transport-neutral `PipelineResult` internally while MCP preserves the previous human-readable text surface.
 
 ### Dependency/version drift
 
@@ -113,7 +128,7 @@ Probe/trim/concat/thumbnail result models now live in `declip.results`; `declip.
 
 ## Test posture
 
-The branch adds regression coverage for:
+The branch contains regression coverage for:
 
 - render-plan normalization and legacy API compatibility
 - FFmpeg input-option scoping
@@ -123,24 +138,33 @@ The branch adds regression coverage for:
 - still-image duration handling
 - manual timeline gap/overlap routing
 - dedicated-audio backend selection
-- MLT normalization
+- no-compatible-backend failures
+- MLT normalization, finite clip spans, gap preservation, and capability rejection
 - transport-neutral result compatibility
 - MCP/CLI adapter boundaries and CLI command-surface preservation
 - single-pass combined color grading
 - project validation of filter assets
 - ASS generation, transition aliases, and reframe filter construction
 
-A local compiler harness passed 12 focused tests during the initial compiler extraction. The repository itself has no configured CI runner, and this environment cannot clone the branch over git/network transport, so the expanded committed suite has not been executed end-to-end from the GitHub checkout. That remains the main verification gap before merge.
+Executable synthetic-media integration tests are also committed:
 
-## Remaining hardening work
+- FFmpeg two-clip concat
+- FFmpeg dissolve timing
+- FFmpeg still-image duration
+- FFmpeg multi-clip watermark render
+- MLT bounded/trimmed smoke render when `melt` is available
 
-The architecture consolidation is complete enough that the remaining work is narrower and evidence-driven:
+The initial compiler extraction was exercised with a 12-test local harness. The current environment cannot clone and execute the complete GitHub branch checkout, so the expanded committed suite has not been run end-to-end here. That is now the principal verification gap before merge; the missing coverage itself has been written.
 
-1. **Synthetic-media integration tests.** Run the committed suite in a real checkout, then add end-to-end renders against generated fixtures to validate actual FFmpeg graphs. Add MLT integration coverage where `melt` is available.
-2. **MLT transition audit.** Validate same-track and multi-track transition semantics independently; compiler isolation now makes this tractable.
+## Remaining engineering work
+
+The broad architecture/hardening pass is complete. Remaining work is narrower:
+
+1. **Execute the full committed suite in a normal checkout.** This is the immediate pre-merge gate. Run unit tests plus the renderer integration fixtures with FFmpeg; run the MLT smoke fixture wherever `melt` is installed.
+2. **Implement real MLT transition lowering if MLT transition support is required.** The current compiler correctly rejects it rather than emitting invalid same-track XML. A future implementation should construct overlapping A/B tracks in accordance with MLT's model.
 3. **Richer typed results.** Analysis, media, generation, edit, and project operations still use human-readable strings in several core paths. Add domain-specific result models where agents benefit from structured fields.
-4. **Speed/duration semantics.** The v1 schema still has an ambiguity between source span, explicit timeline duration, and speed filters. Resolve this in the normalized IR before expanding retiming features.
-5. **Generation argument schemas.** Live model discovery exists, but model-specific fal.ai parameter schemas are still curated/hardcoded for selected families.
+4. **Resolve speed/duration semantics.** The v1 schema still has ambiguity between source span, explicit timeline duration, and speed filters. Resolve this in the normalized IR before expanding retiming features.
+5. **Generation argument schemas.** Live model discovery exists, but model-specific fal.ai parameter schemas remain curated/hardcoded for selected families.
 
 ## Research items still genuinely deferred
 
@@ -152,4 +176,4 @@ The architecture consolidation is complete enough that the remaining work is nar
 
 ## Priority
 
-The next engineering pass should begin with executable synthetic-media integration tests and the MLT transition audit. Broad feature accumulation can resume after those establish end-to-end renderer confidence on top of the new boundaries.
+Do not add another broad feature wave before the committed suite has been executed in a normal checkout. After that verification gate, the architecture is sufficiently consolidated for feature development to resume without reintroducing the old transport/backend boundary problems.
