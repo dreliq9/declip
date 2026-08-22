@@ -17,7 +17,7 @@ Core reusable modules define user-facing media concepts and operations:
 - `ops.py` — shared low-level processing operations
 - `quick.py` — structured probe/trim/concat/thumbnail operations
 - `edit.py` — file-based editing capabilities
-- `project_ops.py` — project validation/render/export/asset operations
+- `project_ops.py` — project validation/preparation/render/export/asset operations
 - `generate.py` + `fetch_models.py` — AI generation capabilities and model discovery
 - `pipelines/` — end-to-end production pipelines
 - `workflows/` — reusable editing workflow recipes
@@ -72,9 +72,11 @@ A backend should be small enough that most correctness can be tested without lau
 
 ### 6. Adapters
 
-`mcp/` validates MCP-specific inputs, calls core capabilities, and serializes results. The major edit, quick, project, and production-pipeline MCP modules are thin wrappers around core modules.
+`mcp/` validates MCP-specific inputs, calls core capabilities, and serializes results. Edit, quick, project, and production-pipeline MCP modules are thin wrappers around core modules; analysis/media/generation adapters primarily format existing core results.
 
-`cli.py` is also an adapter by design, but it still contains legacy duplicate implementations. Removing that duplication is the next boundary cleanup; it should reuse the same core modules without changing command names or flags.
+`cli_adapter.py` owns the Click command surface but delegates project preparation, quick operations, processing operations, generation, analysis, and workflows to core modules. The historical `declip.cli:main` import remains as a compatibility shim, while the package entry point resolves directly to `declip.cli_adapter:main`.
+
+Neither thin adapter layer owns subprocess execution. Boundary tests enforce this invariant and enumerate the CLI command surface.
 
 ## Backend selection
 
@@ -86,13 +88,13 @@ Still-image inputs are explicitly looped by the FFmpeg compiler for their normal
 
 ## Compatibility policy
 
-Existing public imports from `declip.backends.ffmpeg`, `declip.backends.mlt`, and `declip.mcp.types` remain available as compatibility re-exports while implementation ownership moves downward.
+Existing public imports from `declip.backends.ffmpeg`, `declip.backends.mlt`, `declip.mcp.types`, and `declip.cli:main` remain available as compatibility re-exports/shims while implementation ownership moves downward.
 
-Existing MCP tool names and principal argument signatures are preserved while implementations move to reusable capability modules.
+Existing MCP tool names and the CLI command/flag surface are preserved while implementations move to reusable capability modules.
 
 ## Testing policy
 
-Compiler correctness is primarily unit-testable. Regression tests inspect generated argv/XML and adapter boundaries before integration tests invoke FFmpeg/MLT.
+Compiler correctness is primarily unit-testable. Regression tests inspect generated argv/XML, transport-neutral contracts, and adapter boundaries before integration tests invoke FFmpeg/MLT.
 
 Required regression categories include:
 
@@ -105,6 +107,8 @@ Required regression categories include:
 - freeze-frame behavior
 - backend-selection preservation of dedicated audio tracks
 - transport-neutral result imports
-- absence of subprocess ownership in thin MCP adapters
+- absence of subprocess ownership in thin MCP/CLI adapters
+- CLI command-surface preservation
+- production reframe and transition normalization
 
 Synthetic-media integration tests remain the required second layer for actual render verification.
