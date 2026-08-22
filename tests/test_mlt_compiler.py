@@ -32,6 +32,20 @@ def test_mlt_profile_uses_xml_attributes(tmp_path: Path):
     assert profile.find("property") is None
 
 
+def test_mlt_graph_is_bounded_to_normalized_timeline(tmp_path: Path):
+    project = Project.model_validate({
+        "version": "1.0",
+        "settings": {"fps": 30},
+        "timeline": {"tracks": [{"id": "main", "clips": [{"asset": "a.mp4", "start": 0, "duration": 2.0}]}]},
+    })
+    root = mlt.compile_project(project, tmp_path).tree.getroot()
+    background = root.find("./playlist[@id='playlist_bg']/entry")
+    tractor = root.find("./tractor[@id='main']")
+    assert background is not None and tractor is not None
+    assert background.get("out") == "59"
+    assert tractor.get("out") == "59"
+
+
 def test_mlt_rejects_same_track_transition_until_playlist_mix_is_lowered(tmp_path: Path):
     project = Project.model_validate({
         "version": "1.0",
