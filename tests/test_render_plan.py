@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from declip.compilers.render_plan import build_render_plan
+import pytest
+
+from declip.compilers.render_plan import RenderPlanError, build_render_plan
 from declip.schema import Project
 
 
@@ -40,3 +42,14 @@ def test_freeze_frame_without_duration_gets_explicit_default(tmp_path: Path):
     plan = build_render_plan(project, tmp_path)
     assert plan.project.timeline.tracks[0].clips[0].duration == 5.0
     assert "freeze-frame" in plan.warnings[0].message
+
+
+def test_project_includes_are_rejected_until_lowered(tmp_path: Path):
+    project = Project.model_validate({
+        "version": "1.0",
+        "includes": ["nested.json"],
+        "timeline": {"tracks": [{"id": "main", "clips": [{"asset": "a.mp4", "start": 0, "duration": 1.0}]}]},
+    })
+
+    with pytest.raises(RenderPlanError, match="no compiler currently lowers"):
+        build_render_plan(project, tmp_path)
