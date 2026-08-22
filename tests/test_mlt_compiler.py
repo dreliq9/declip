@@ -1,9 +1,9 @@
 from pathlib import Path
-from xml.etree import ElementTree
 
 import pytest
 
 from declip.compilers import mlt
+from declip.compilers.render_plan import build_render_plan
 from declip.schema import Project
 
 
@@ -16,6 +16,22 @@ def test_mlt_compiler_normalizes_auto_starts(tmp_path: Path):
     assert str(tmp_path / "b.mp4") in compiled.xml
 
 
+def test_mlt_profile_uses_xml_attributes(tmp_path: Path):
+    project = Project.model_validate({
+        "version": "1.0",
+        "settings": {"resolution": [1280, 720], "fps": 24},
+        "timeline": {"tracks": [{"id": "main", "clips": [{"asset": "a.mp4", "start": 0, "duration": 1.0}]}]},
+    })
+    root = mlt.compile_project(project, tmp_path).tree.getroot()
+    profile = root.find("profile")
+    assert profile is not None
+    assert profile.get("width") == "1280"
+    assert profile.get("height") == "720"
+    assert profile.get("frame_rate_num") == "24"
+    assert profile.get("frame_rate_den") == "1"
+    assert profile.find("property") is None
+
+
 def test_mlt_rejects_same_track_transition_until_playlist_mix_is_lowered(tmp_path: Path):
     project = Project.model_validate({
         "version": "1.0",
@@ -25,7 +41,7 @@ def test_mlt_rejects_same_track_transition_until_playlist_mix_is_lowered(tmp_pat
         ]}]},
     })
 
-    plan = __import__("declip.compilers.render_plan", fromlist=["build_render_plan"]).build_render_plan(project, tmp_path)
+    plan = build_render_plan(project, tmp_path)
     assert mlt.can_handle(plan.project) is False
     assert any("transition_in" in reason for reason in mlt.unsupported_reasons(plan.project))
     with pytest.raises(mlt.CompilationError):
@@ -39,9 +55,20 @@ def test_mlt_rejects_unlowered_clip_semantics(tmp_path: Path):
             "asset": "a.mp4", "start": 0, "duration": 2.0, "reverse": True,
         }]}]},
     })
-    plan = __import__("declip.compilers.render_plan", fromlist=["build_render_plan"]).build_render_plan(project, tmp_path)
+    plan = build_render_plan(project, tmp_path)
     assert mlt.can_handle(plan.project) is False
     assert any("reverse" in reason for reason in mlt.unsupported_reasons(plan.project))
+
+
+def test_mlt_rejects_alpha_without_explicit_compositor(tmp_path: Path):
+    project = Project.model_validate({
+        "version": "1.0",
+        "timeline": {"tracks": [{"id": "main", "clips": [{
+            "asset": "a.mp4", "start": 0, "duration": 2.0, "opacity": 0.5,
+        }]}]},
+    })
+    plan = build_render_plan(project, tmp_path)
+    assert any("opacity" in reason for reason in mlt.unsupported_reasons(plan.project))
 
 
 def test_mlt_accepts_dedicated_audio_without_unlowered_features(tmp_path: Path):
@@ -52,7 +79,7 @@ def test_mlt_accepts_dedicated_audio_without_unlowered_features(tmp_path: Path):
             "audio": [{"asset": "music.mp3", "start": 0.5, "duration": 2.0}],
         },
     })
-    plan = __import__("declip.compilers.render_plan", fromlist=["build_render_plan"]).build_render_plan(project, tmp_path)
+    plan = build_render_plan(project, tmp_path)
     assert mlt.can_handle(plan.project) is True
     compiled = mlt.compile_project(project, tmp_path)
     assert "playlist_audio0" in compiled.xml
@@ -88,6 +115,25 @@ def test_mlt_manual_gap_is_preserved_as_playlist_blank(tmp_path: Path):
     blank = playlist.find("blank")
     assert blank is not None
     assert blank.get("length") == "60"
+
+
+def test_mlt_uses_native_track_precedence_for_opaque_video(tmp_path: Path):
+    project = Project.model_validate({
+        "version": "1.0",
+        "timeline": {"tracks": [
+            {"id": "base", "clips": [{"asset": "a.mp4", "start": 0, "duration": 2.0}]},
+            {"id": "upper", "clips": [{"asset": "b.mp4", "start": 0, "duration": 1.0}]},
+        ]},
+    })
+    root = mlt.compile_project(project, tmp_path).tree.getroot()
+    services = [
+        prop.text
+        for transition in root.findall("./tractor/transition")
+        for prop in transition.findall("property")
+        if prop.get("name") == "mlt_service"
+    ]
+    assert "frei0r.cairoblend" not in services
+    assert set(services) <= {"mix"}
 
 
 def test_mlt_audio_mix_uses_distinct_tracks(tmp_path: Path):
