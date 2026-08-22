@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
-declip = "declip.cli:main"
+declip = "declip.cli_adapter:main"
 declip-mcp = "declip.mcp.server:main"
 
 [project.optional-dependencies]
