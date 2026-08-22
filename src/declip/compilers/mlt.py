@@ -97,6 +97,10 @@ def unsupported_reasons(project: Project, tolerance: float = 1e-3) -> tuple[str,
                 reasons.append(
                     f"{label} uses position; positioned-track sizing semantics are not yet explicit in the MLT IR"
                 )
+            if clip.opacity != 1.0:
+                reasons.append(
+                    f"{label} uses opacity; alpha compositing is not yet lowered explicitly in the MLT IR"
+                )
             if clip.reverse:
                 reasons.append(f"{label} uses reverse, which is not lowered by the MLT compiler")
             if clip.freeze_frame is not None:
@@ -249,16 +253,12 @@ def _compile_normalized(project: Project, project_dir: Path) -> ElementTree:
     for playlist_id in playlist_ids:
         SubElement(multitrack, "track", producer=playlist_id)
 
-    video_track_count = len(project.timeline.tracks)
-    for video_track_index in range(1, video_track_count + 1):
-        composite = SubElement(tractor, "transition")
-        add_property(composite, "a_track", "0")
-        add_property(composite, "b_track", str(video_track_index))
-        add_property(composite, "mlt_service", "frei0r.cairoblend")
-        add_property(composite, "always_active", "1")
+    # For the unpositioned, fully opaque tracks this compiler accepts, native
+    # MLT multitrack precedence is sufficient: higher-numbered non-blank tracks
+    # win. Explicit compositing is reserved for a future IR that models alpha.
 
-    # Mix audio from every non-background track into the output. This mirrors
-    # the standard MLT/Shotcut pattern of summing each B track against track 0.
+    # Mix audio from every non-background track into the output using the
+    # standard MLT/Shotcut sum-style mix transition.
     for track_index in range(1, len(playlist_ids)):
         mix = SubElement(tractor, "transition")
         add_property(mix, "a_track", "0")
