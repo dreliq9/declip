@@ -8,10 +8,13 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+LANGS = ("cpp", "rust", "zig", "odin")
+DISPLAY = {"cpp": "C++", "rust": "Rust", "zig": "Zig", "odin": "Odin"}
 MK_OK = 0
 MK_INVALID = 1
 MK_CONFLICT = 3
 MK_BUFFER_TOO_SMALL = 4
+
 
 class Time(ctypes.Structure):
     _fields_ = [("num", ctypes.c_int64), ("den", ctypes.c_int64)]
@@ -37,7 +40,7 @@ def load(path: Path):
     lib.mk_project_propose_trim.restype = ctypes.c_int
     lib.mk_project_commit.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64)]
     lib.mk_project_commit.restype = ctypes.c_int
-    lib.mk_project_lower_ffmpeg.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+    lib.mk_project_lower_ffmpeg.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
     lib.mk_project_lower_ffmpeg.restype = ctypes.c_int
     lib.mk_ffmpeg_version.restype = ctypes.c_uint32
     lib.mk_benchmark.argtypes = [ctypes.c_uint64]
@@ -76,7 +79,7 @@ def scenario(lib):
         needed = ctypes.c_size_t()
         assert lib.mk_project_lower_ffmpeg(p, None, 0, ctypes.byref(needed)) == MK_BUFFER_TOO_SMALL
         buf = ctypes.create_string_buffer(needed.value)
-        assert lib.mk_project_lower_ffmpeg(p, buf, len(buf), ctypes.byref(needed)) == MK_OK
+        assert lib.mk_project_lower_ffmpeg(p, ctypes.cast(buf, ctypes.c_void_p), len(buf), ctypes.byref(needed)) == MK_OK
         lowering = buf.value.decode("utf-8")
         return {
             "lowering": lowering,
@@ -130,30 +133,27 @@ def text_metrics(path, language):
     elif language == "zig":
         metrics["manual_memory_occurrences"] = text.count("malloc") + text.count("free(")
         metrics["pointer_cast_occurrences"] = text.count("@ptrCast") + text.count("@alignCast")
+    elif language == "odin":
+        metrics["allocation_occurrences"] = text.count("new(") + text.count("free(")
+        metrics["rawptr_occurrences"] = text.count("rawptr")
+        metrics["pointer_cast_occurrences"] = text.count("cast(^") + text.count("cast([^]")
     return metrics
 
 
 def main():
-    if len(sys.argv) != 4:
-        raise SystemExit("usage: run_bakeoff.py CPP_SO RUST_SO ZIG_SO")
-    libs = {"cpp": Path(sys.argv[1]), "rust": Path(sys.argv[2]), "zig": Path(sys.argv[3])}
+    if len(sys.argv) != 5:
+        raise SystemExit("usage: run_bakeoff.py CPP_SO RUST_SO ZIG_SO ODIN_SO")
+    libs = {name: Path(sys.argv[i + 1]) for i, name in enumerate(LANGS)}
     iterations = int(os.environ.get("MK_BENCH_ITERATIONS", "10000000"))
     rounds = int(os.environ.get("MK_BENCH_ROUNDS", "7"))
     source_paths = {
         "cpp": ROOT / "cpp" / "kernel.cpp",
         "rust": ROOT / "rust" / "src" / "lib.rs",
         "zig": ROOT / "zig" / "kernel.zig",
+        "odin": ROOT / "odin" / "kernel.odin",
     }
-    build_time_paths = {
-        "cpp": os.environ.get("MK_CPP_BUILD_TIME", ""),
-        "rust": os.environ.get("MK_RUST_BUILD_TIME", ""),
-        "zig": os.environ.get("MK_ZIG_BUILD_TIME", ""),
-    }
-    warm_build_time_paths = {
-        "cpp": os.environ.get("MK_CPP_WARM_BUILD_TIME", ""),
-        "rust": os.environ.get("MK_RUST_WARM_BUILD_TIME", ""),
-        "zig": os.environ.get("MK_ZIG_WARM_BUILD_TIME", ""),
-    }
+    build_time_paths = {name: os.environ.get(f"MK_{name.upper()}_BUILD_TIME", "") for name in LANGS}
+    warm_build_time_paths = {name: os.environ.get(f"MK_{name.upper()}_WARM_BUILD_TIME", "") for name in LANGS}
 
     results = {}
     for name, path in libs.items():
@@ -184,21 +184,23 @@ def main():
         "results": results,
         "notes": {
             "performance": "Synthetic arithmetic benchmark is a runtime sanity check, not a selection criterion.",
-            "builds": "Cold build is from a fresh hosted runner. Warm is an immediate no-change rebuild: Cargo/Zig may reuse tool caches; g++ recompiles the translation unit with warm filesystem/header caches.",
-            "zig_storage": "The Zig spike uses explicitly bounded project arrays to avoid hiding allocator/stdlib behavior; this is a bakeoff implementation choice, not the proposed production state model.",
-            "abi": "All three implementations expose and pass the same C ABI through Python ctypes and call the same system libavformat.",
+            "builds": "Cold build is from a fresh hosted runner. Warm is an immediate no-change rebuild; build-system/compiler caching behavior differs by language.",
+            "bounded_storage": "The Zig and Odin spikes use explicitly bounded project arrays so the state slice remains small and does not let container-library differences dominate the experiment.",
+            "abi": "All four implementations expose and pass the same C ABI through Python ctypes and call the same system libavformat.",
             "loc": "Implementation LOC is recorded for reference only and must not be ranked directly because formatting density differs substantially between the spikes.",
         },
     }
     Path("bakeoff-results.json").write_text(json.dumps(payload, indent=2) + "\n")
 
+    header = "| Metric | " + " | ".join(DISPLAY[name] for name in LANGS) + " |"
+    separator = "|---|" + "---:|" * len(LANGS)
     lines = [
         "# Kernel Language Bakeoff — Measured Results",
         "",
-        "All three implementations passed the same exact-time, candidate-delta, revision-conflict, semantic-validation, FFmpeg-lowering, C-ABI, and libavformat interop scenario.",
+        "All four implementations passed the same exact-time, candidate-delta, revision-conflict, semantic-validation, FFmpeg-lowering, C-ABI, and libavformat interop scenario.",
         "",
-        "| Metric | C++ | Rust | Zig |",
-        "|---|---:|---:|---:|",
+        header,
+        separator,
     ]
     for label, getter in [
         ("Cold build seconds", lambda r: r["cold_build_seconds"]),
@@ -208,10 +210,10 @@ def main():
         (f"Median native benchmark seconds ({iterations:,} iterations)", lambda r: r["benchmark"]["median_seconds"]),
     ]:
         vals = []
-        for lang in ("cpp", "rust", "zig"):
+        for lang in LANGS:
             v = getter(results[lang])
             vals.append("n/a" if v is None else (f"{v:.6f}" if isinstance(v, float) else str(v)))
-        lines.append(f"| {label} | {vals[0]} | {vals[1]} | {vals[2]} |")
+        lines.append(f"| {label} | " + " | ".join(vals) + " |")
     lines += [
         "",
         "## Equivalence checks",
@@ -224,13 +226,14 @@ def main():
         "## Important interpretation limits",
         "",
         "- Performance numbers only establish that none of the candidates has a disqualifying native-runtime problem in this slice.",
-        "- The state model is intentionally tiny; the selection must weight ownership safety, semantic expressiveness, ecosystem interop, build maturity, and ABI design more heavily than microbenchmark rank.",
-        "- Warm build numbers are development-loop probes, not equivalent incremental-change builds; Cargo/Zig have integrated caches while raw g++ does not.",
-        "- Implementation LOC is not a valid ranking metric here because the C++ spike is deliberately compressed while Rust/Zig are normally formatted.",
-        "- Zig's spike uses bounded arrays, making its memory-management style unusually explicit. A production Zig implementation would need an allocator/arena policy and would likely grow more manual ownership code.",
+        "- The state model is intentionally tiny; the selection must weight ownership safety, semantic expressiveness, ecosystem interop, build maturity, graphics/runtime fit, and ABI design more heavily than microbenchmark rank.",
+        "- Warm build numbers are development-loop probes, not equivalent incremental-change builds; compiler/build caches behave differently.",
+        "- Implementation LOC is not a valid ranking metric here because formatting density and chosen container approaches differ.",
+        "- Zig and Odin use bounded arrays in this spike. Production implementations would need explicit allocator/arena and ownership policies.",
     ]
     Path("bakeoff-results.md").write_text("\n".join(lines) + "\n")
     print(json.dumps(payload, indent=2))
+
 
 if __name__ == "__main__":
     main()
