@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - research/kernel-final-concurrency-bakeoff-v3
+  pull_request:
+    branches:
+      - planning/media-kernel
   workflow_dispatch:
 
 jobs:
@@ -192,8 +195,6 @@ jobs:
             tail -40 "tsan-results/$lang.log" || true
           done | tee tsan-summary.txt
 
-          # Status 66/125 or an environment/runtime limitation is recorded rather than
-          # silently treated as a candidate failure. A real race report remains evidence.
           if grep -R "WARNING: ThreadSanitizer: data race" tsan-results; then
             echo "ThreadSanitizer reported a data race" >&2
             exit 1
