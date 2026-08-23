@@ -43,6 +43,26 @@ replacements = {
             "const done = k.producers_done and k.terminal == k.result.submitted;",
             "const done = k.producers_done;",
         ),
+        (
+            "for (handles) |h| if (validLocked(&k, h) and !releaseLocked(&k, h)) k.result.violations += 1;",
+            "for (handles) |h| {\n        if (validLocked(&k, h) and !releaseLocked(&k, h)) k.result.violations += 1;\n    }",
+        ),
+        (
+            "for (&k.resources) |*r| if (r.alive or r.refs != 0) { k.result.leaked_resources += 1; };",
+            "for (&k.resources) |*r| {\n        if (r.alive or r.refs != 0) k.result.leaked_resources += 1;\n    }",
+        ),
+        (
+            "for (handles) |h| if (validLocked(&k, h)) { k.result.stale_accepts += 1; };",
+            "for (handles) |h| {\n        if (validLocked(&k, h)) k.result.stale_accepts += 1;\n    }",
+        ),
+        (
+            "export fn main(argc: c_int, argv: [*]const [*:0]const u8) c_int {",
+            "pub export fn main(argc: c_int, argv: [*]const [*:0]const u8) c_int {",
+        ),
+        (
+            "    const start = std.time.nanoTimestamp();\n    const r = runCase(seed, workers, producers, ops, qcap, loss) catch return 3;\n    const elapsed_ns = std.time.nanoTimestamp() - start;\n    const seconds = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000_000.0;",
+            "    const r = runCase(seed, workers, producers, ops, qcap, loss) catch return 3;\n    const seconds: f64 = 0.0;",
+        ),
     ],
 }
 
