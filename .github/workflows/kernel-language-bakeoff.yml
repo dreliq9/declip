@@ -1,0 +1,87 @@
+name: Kernel language bakeoff
+
+on:
+  push:
+    branches:
+      - research/kernel-language-bakeoff
+  workflow_dispatch:
+
+jobs:
+  bakeoff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev pkg-config
+
+      - name: Install Zig 0.16.0
+        run: |
+          curl -fsSL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o /tmp/zig.tar.xz
+          tar -C /tmp -xf /tmp/zig.tar.xz
+          echo "/tmp/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Record toolchain versions
+        run: |
+          {
+            echo "runner=$(uname -a)"
+            echo "g++=$(g++ --version | head -1)"
+            echo "rustc=$(rustc --version)"
+            echo "cargo=$(cargo --version)"
+            echo "zig=$(zig version)"
+            echo "libavformat=$(pkg-config --modversion libavformat)"
+          } | tee toolchains.txt
+
+      - name: Build all candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$PWD"
+          SRC="$ROOT/research/kernel-language-bakeoff"
+          mkdir -p "$ROOT/build"
+
+          /usr/bin/time -f "%e" -o "$ROOT/build/cpp.time" \
+            g++ -std=c++20 -O3 -DNDEBUG -fPIC -shared \
+            "$SRC/cpp/kernel.cpp" -lavformat -o "$ROOT/build/libmk_cpp.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/build/rust.time" \
+            cargo build --release --manifest-path "$SRC/rust/Cargo.toml"
+          cp "$SRC/rust/target/release/libmk_bakeoff_rust.so" "$ROOT/build/libmk_rust.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/build/zig.time" \
+            zig build-lib "$SRC/zig/kernel.zig" -dynamic -OReleaseFast -lc -lavformat \
+            -femit-bin="$ROOT/build/libmk_zig.so"
+
+          strip --strip-unneeded "$ROOT/build/libmk_cpp.so"
+          strip --strip-unneeded "$ROOT/build/libmk_rust.so"
+          strip --strip-unneeded "$ROOT/build/libmk_zig.so"
+
+          echo "Build times:"
+          paste -d' ' <(printf 'C++\nRust\nZig\n') \
+            <(cat "$ROOT/build/cpp.time" "$ROOT/build/rust.time" "$ROOT/build/zig.time")
+          ls -l "$ROOT/build"/*.so
+
+      - name: Run equivalent C ABI scenarios and benchmark
+        env:
+          MK_CPP_BUILD_TIME: ${{ github.workspace }}/build/cpp.time
+          MK_RUST_BUILD_TIME: ${{ github.workspace }}/build/rust.time
+          MK_ZIG_BUILD_TIME: ${{ github.workspace }}/build/zig.time
+          MK_BENCH_ITERATIONS: "10000000"
+          MK_BENCH_ROUNDS: "7"
+        run: |
+          python3 research/kernel-language-bakeoff/run_bakeoff.py \
+            build/libmk_cpp.so build/libmk_rust.so build/libmk_zig.so
+          cat bakeoff-results.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload measured results
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-language-bakeoff-results
+          path: |
+            bakeoff-results.json
+            bakeoff-results.md
+            toolchains.txt
+            build/*.time
