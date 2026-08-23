@@ -106,6 +106,38 @@ This restriction is intentional. MLT transitions combine frames from distinct A/
 
 Forced backend selection is subject to the same rule.
 
+## Planned foundational-kernel boundary
+
+The current Declip compiler architecture is now treated as a proving ground for a lower, application-independent **foundational media kernel**. The planning record is in:
+
+- `docs/media-kernel-research.md`
+- `docs/media-kernel-construction-plan.md`
+
+The intended long-term boundary is:
+
+```text
+Declip
+  user/agent intent, workflows, analysis/generation orchestration
+        │
+        ▼
+Foundational Media Kernel
+  exact temporal semantics, persistent revisions, typed media IR,
+  transformation/lowering, execution planning, semantic-loss accounting,
+  resource/authority contracts, artifact admission
+        │
+        ▼
+FFmpeg / GPU providers / GStreamer / cloud / other execution backends
+```
+
+The kernel should eventually live in its own repository. Declip remains its first reference client and should migrate incrementally rather than through a rewrite.
+
+The governing split is:
+
+> **Kernel:** what temporal media computation means and what guarantees hold.  
+> **Declip:** what a user or agent wants to accomplish with those primitives.
+
+Until kernel contracts are implemented and conformance-tested, the current Declip schema/render-plan/compiler boundaries remain authoritative for Declip itself.
+
 ## Compatibility policy
 
 Existing public imports from `declip.backends.ffmpeg`, `declip.backends.mlt`, `declip.mcp.types`, and `declip.cli:main` remain available as compatibility re-exports/shims while implementation ownership moves downward.
