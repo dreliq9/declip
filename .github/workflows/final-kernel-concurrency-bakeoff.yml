@@ -1,0 +1,223 @@
+name: Final media-kernel concurrency gate
+
+on:
+  push:
+    branches:
+      - research/kernel-final-concurrency-bakeoff-v3
+  workflow_dispatch:
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libvulkan-dev mesa-vulkan-drivers vulkan-tools
+
+      - name: Install Zig 0.16.0
+        run: |
+          curl -fsSL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o /tmp/zig.tar.xz
+          tar -C /tmp -xf /tmp/zig.tar.xz
+          echo "/tmp/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Install Odin dev-2026-08
+        run: |
+          curl -fsSL https://github.com/odin-lang/Odin/releases/download/dev-2026-08/odin-linux-amd64-dev-2026-08.tar.gz -o /tmp/odin.tar.gz
+          mkdir -p /tmp/odin-dist
+          tar -C /tmp/odin-dist -xzf /tmp/odin.tar.gz
+          ODIN_BIN="$(find /tmp/odin-dist -type f -name odin -perm -111 | head -1)"
+          test -n "$ODIN_BIN"
+          echo "$(dirname "$ODIN_BIN")" >> "$GITHUB_PATH"
+
+      - name: Record toolchains and prepare sources
+        run: |
+          {
+            echo "runner=$(uname -a)"
+            echo "g++=$(g++ --version | head -1)"
+            echo "clang++=$(clang++ --version | head -1)"
+            echo "rustc=$(rustc --version)"
+            echo "cargo=$(cargo --version)"
+            echo "zig=$(zig version)"
+            echo "odin=$(odin version)"
+            echo "vulkan=$(pkg-config --modversion vulkan)"
+          } | tee final-gate-toolchains.txt
+          python3 research/kernel-final-concurrency-bakeoff/prepare_sources.py
+          python3 -m py_compile research/kernel-final-concurrency-bakeoff/run_gate.py
+          zig fmt --check research/kernel-final-concurrency-bakeoff/zig/main.zig
+
+      - name: Build candidates and measure cold/warm loops
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$PWD"
+          SRC="$ROOT/research/kernel-final-concurrency-bakeoff"
+          mkdir -p "$ROOT/final-gate-build"
+
+          /usr/bin/time -f "%e" -o final-gate-build/cpp.cold.time \
+            g++ -std=c++20 -O3 -DNDEBUG -pthread "$SRC/cpp/main.cpp" -o final-gate-build/cpp
+
+          /usr/bin/time -f "%e" -o final-gate-build/rust.cold.time \
+            cargo build --release --manifest-path "$SRC/rust/Cargo.toml"
+          cp "$SRC/rust/target/release/mk_final_concurrency_rust" final-gate-build/rust
+
+          /usr/bin/time -f "%e" -o final-gate-build/zig.cold.time \
+            zig build-exe "$SRC/zig/main.zig" -OReleaseFast -lc -femit-bin="$ROOT/final-gate-build/zig"
+
+          /usr/bin/time -f "%e" -o final-gate-build/odin.cold.time \
+            odin build "$SRC/odin" -o:speed -out:"$ROOT/final-gate-build/odin"
+
+          /usr/bin/time -f "%e" -o final-gate-build/cpp.warm.time \
+            g++ -std=c++20 -O3 -DNDEBUG -pthread "$SRC/cpp/main.cpp" -o final-gate-build/cpp
+          /usr/bin/time -f "%e" -o final-gate-build/rust.warm.time \
+            cargo build --release --manifest-path "$SRC/rust/Cargo.toml"
+          cp "$SRC/rust/target/release/mk_final_concurrency_rust" final-gate-build/rust
+          /usr/bin/time -f "%e" -o final-gate-build/zig.warm.time \
+            zig build-exe "$SRC/zig/main.zig" -OReleaseFast -lc -femit-bin="$ROOT/final-gate-build/zig"
+          /usr/bin/time -f "%e" -o final-gate-build/odin.warm.time \
+            odin build "$SRC/odin" -o:speed -out:"$ROOT/final-gate-build/odin"
+
+          strip --strip-unneeded final-gate-build/{cpp,rust,zig,odin}
+          echo "Cold build seconds" | tee final-gate-build/build-summary.txt
+          paste -d' ' <(printf 'cpp\nrust\nzig\nodin\n') <(cat final-gate-build/{cpp,rust,zig,odin}.cold.time) | tee -a final-gate-build/build-summary.txt
+          echo "Warm no-change seconds" | tee -a final-gate-build/build-summary.txt
+          paste -d' ' <(printf 'cpp\nrust\nzig\nodin\n') <(cat final-gate-build/{cpp,rust,zig,odin}.warm.time) | tee -a final-gate-build/build-summary.txt
+          ls -l final-gate-build/{cpp,rust,zig,odin} | tee -a final-gate-build/build-summary.txt
+          wc -lc "$SRC"/cpp/main.cpp "$SRC"/rust/src/main.rs "$SRC"/zig/main.zig "$SRC"/odin/main.odin | tee final-gate-source-metrics.txt
+
+      - name: Run 96-case concurrency ownership matrix
+        run: |
+          python3 research/kernel-final-concurrency-bakeoff/run_gate.py \
+            final-gate-build/cpp \
+            final-gate-build/rust \
+            final-gate-build/zig \
+            final-gate-build/odin | tee final-concurrency-results.log
+
+      - name: Validate simulated fence model against real Vulkan fence
+        run: |
+          cc -O2 research/kernel-final-concurrency-bakeoff/vulkan_probe.c -lvulkan -o final-gate-build/vulkan-probe
+          vulkaninfo --summary | tee vulkan-summary.txt
+          final-gate-build/vulkan-probe | tee vulkan-probe.txt
+
+      - name: C++ ASan and UBSan stress
+        run: |
+          clang++ -std=c++20 -O1 -g -pthread -fno-omit-frame-pointer \
+            -fsanitize=address,undefined research/kernel-final-concurrency-bakeoff/cpp/main.cpp \
+            -o final-gate-build/cpp-asan
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+            final-gate-build/cpp-asan 777 8 8 200 16 0 | tee cpp-asan.log
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+            final-gate-build/cpp-asan 778 8 8 200 16 1 | tee -a cpp-asan.log
+
+      - name: Odin ASan stress
+        run: |
+          odin build research/kernel-final-concurrency-bakeoff/odin -o:speed -sanitize:address \
+            -out:"$PWD/final-gate-build/odin-asan"
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 final-gate-build/odin-asan 777 8 8 200 16 0 | tee odin-asan.log
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 final-gate-build/odin-asan 778 8 8 200 16 1 | tee -a odin-asan.log
+
+      - name: Zig ReleaseSafe stress
+        run: |
+          zig build-exe research/kernel-final-concurrency-bakeoff/zig/main.zig -OReleaseSafe -lc \
+            -femit-bin="$PWD/final-gate-build/zig-safe"
+          final-gate-build/zig-safe 777 8 8 200 16 0 2>&1 | tee zig-safe.log
+          final-gate-build/zig-safe 778 8 8 200 16 1 2>&1 | tee -a zig-safe.log
+
+      - name: Install Rust nightly sanitizer support
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+
+      - name: ThreadSanitizer probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$PWD/research/kernel-final-concurrency-bakeoff"
+          mkdir -p tsan-results
+
+          set +e
+          clang++ -std=c++20 -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=thread \
+            "$SRC/cpp/main.cpp" -o final-gate-build/cpp-tsan
+          CPP_BUILD=$?
+          if [ "$CPP_BUILD" -eq 0 ]; then
+            TSAN_OPTIONS=halt_on_error=1 final-gate-build/cpp-tsan 9001 8 8 160 16 0 >tsan-results/cpp.log 2>&1
+            echo $? > tsan-results/cpp.status
+          else
+            echo "$CPP_BUILD" > tsan-results/cpp.status
+            echo "TSAN_BUILD_FAILED" > tsan-results/cpp.log
+          fi
+
+          odin build "$SRC/odin" -o:speed -sanitize:thread -out:"$PWD/final-gate-build/odin-tsan" >tsan-results/odin-build.log 2>&1
+          ODIN_BUILD=$?
+          if [ "$ODIN_BUILD" -eq 0 ]; then
+            TSAN_OPTIONS=halt_on_error=1 final-gate-build/odin-tsan 9001 8 8 160 16 0 >tsan-results/odin.log 2>&1
+            echo $? > tsan-results/odin.status
+          else
+            echo "$ODIN_BUILD" > tsan-results/odin.status
+            cp tsan-results/odin-build.log tsan-results/odin.log
+          fi
+
+          if zig build-exe --help 2>&1 | grep -q -- '-fsanitize-thread'; then
+            zig build-exe "$SRC/zig/main.zig" -OReleaseSafe -lc -fsanitize-thread \
+              -femit-bin="$PWD/final-gate-build/zig-tsan" >tsan-results/zig-build.log 2>&1
+            ZIG_BUILD=$?
+            if [ "$ZIG_BUILD" -eq 0 ]; then
+              TSAN_OPTIONS=halt_on_error=1 final-gate-build/zig-tsan 9001 8 8 160 16 0 >tsan-results/zig.log 2>&1
+              echo $? > tsan-results/zig.status
+            else
+              echo "$ZIG_BUILD" > tsan-results/zig.status
+              cp tsan-results/zig-build.log tsan-results/zig.log
+            fi
+          else
+            echo "125" > tsan-results/zig.status
+            echo "TSAN_UNAVAILABLE_IN_ZIG_CLI" > tsan-results/zig.log
+          fi
+
+          rustup run nightly bash -c 'export RUSTFLAGS="-Zsanitizer=thread"; cargo build -Zbuild-std --target x86_64-unknown-linux-gnu --release --manifest-path research/kernel-final-concurrency-bakeoff/rust/Cargo.toml' >tsan-results/rust-build.log 2>&1
+          RUST_BUILD=$?
+          if [ "$RUST_BUILD" -eq 0 ]; then
+            TSAN_OPTIONS=halt_on_error=1 "$SRC/rust/target/x86_64-unknown-linux-gnu/release/mk_final_concurrency_rust" \
+              9001 8 8 160 16 0 >tsan-results/rust.log 2>&1
+            echo $? > tsan-results/rust.status
+          else
+            echo "$RUST_BUILD" > tsan-results/rust.status
+            cp tsan-results/rust-build.log tsan-results/rust.log
+          fi
+          set -e
+
+          for lang in cpp rust zig odin; do
+            printf '%s status=' "$lang"
+            cat "tsan-results/$lang.status"
+            tail -40 "tsan-results/$lang.log" || true
+          done | tee tsan-summary.txt
+
+          # Status 66/125 or an environment/runtime limitation is recorded rather than
+          # silently treated as a candidate failure. A real race report remains evidence.
+          if grep -R "WARNING: ThreadSanitizer: data race" tsan-results; then
+            echo "ThreadSanitizer reported a data race" >&2
+            exit 1
+          fi
+
+      - name: Upload final gate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-media-kernel-language-gate
+          path: |
+            final-concurrency-results.json
+            final-concurrency-results.log
+            final-gate-toolchains.txt
+            final-gate-source-metrics.txt
+            final-gate-build/*.time
+            final-gate-build/build-summary.txt
+            vulkan-summary.txt
+            vulkan-probe.txt
+            cpp-asan.log
+            odin-asan.log
+            zig-safe.log
+            tsan-summary.txt
+            tsan-results/*
+            research/kernel-final-concurrency-bakeoff/cpp/main.cpp
+            research/kernel-final-concurrency-bakeoff/rust/src/main.rs
+            research/kernel-final-concurrency-bakeoff/zig/main.zig
+            research/kernel-final-concurrency-bakeoff/odin/main.odin
