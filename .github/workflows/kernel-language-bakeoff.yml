@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - research/kernel-language-bakeoff
+  pull_request:
+    branches:
+      - planning/media-kernel
   workflow_dispatch:
 
 jobs:
