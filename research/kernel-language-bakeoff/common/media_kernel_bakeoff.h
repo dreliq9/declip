@@ -29,6 +29,7 @@ mk_status_t mk_project_append_clip(mk_project_t* project, const char* asset_id, 
 mk_status_t mk_project_propose_trim(mk_project_t* project, uint64_t base_revision, size_t clip_index, mk_time_t new_duration, uint64_t* proposal_id);
 mk_status_t mk_project_commit(mk_project_t* project, uint64_t proposal_id, uint64_t* new_revision);
 mk_status_t mk_project_lower_ffmpeg(const mk_project_t* project, char* buffer, size_t capacity, size_t* needed);
+uint32_t mk_ffmpeg_version(void);
 uint64_t mk_benchmark(uint64_t iterations);
 
 #ifdef __cplusplus
