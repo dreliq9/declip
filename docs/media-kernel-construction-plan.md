@@ -1,11 +1,13 @@
 # Foundational Media Kernel Construction Plan
 
-**Status:** initial construction plan  
-**Date:** 2026-08-22  
+**Status:** active construction plan  
+**Date:** 2026-08-23  
 **Working name:** Media Kernel  
-**Reference client:** Declip
+**Reference client:** Declip  
+**Primary implementation language:** Odin  
+**Durable public boundary:** stable C ABI
 
-This plan turns `docs/media-kernel-research.md` into a build sequence. It is intentionally biased toward proving semantics with small vertical slices rather than building a broad editor feature set.
+This plan turns `docs/media-kernel-research.md` into a build sequence. It is intentionally biased toward proving semantics with small vertical slices rather than building a broad editor feature set. The implementation-language decision is closed by `docs/media-kernel-final-language-gate.md`: Odin is the Phase 1 primary language, C/C++ remain first-class provider languages, and Rust is the safety-first fallback if production evidence triggers reconsideration.
 
 ## 1. Construction strategy
 
@@ -56,10 +58,15 @@ These should be written as executable conformance tests as early as possible.
 13. **Provenance is not truth.** Origin, verification, authority, synthetic status, and factual truth remain distinct concepts.
 14. **Backend choice is explainable.** A planner can report why an implementation/backend was selected or rejected.
 15. **Old revisions remain interpretable.** Later invalidation or supersession never rewrites historical meaning.
+16. **Durable objects do not use cross-module owning pointers.** Stable IDs/references are the ownership-neutral contract for persistent media state.
+17. **Ephemeral resources are generation-addressed.** CPU/GPU/provider resources use central stores and `slot + generation` handles so stale reuse is detectable.
+18. **Asynchronous lifetime is explicit.** Submission/fence/cancellation/loss state, not lexical scope, determines when execution resources may be reclaimed.
+19. **Queues are bounded.** Backpressure is an execution condition the scheduler must expose and manage, not an accidental failure mode.
+20. **Safety instrumentation is part of definition of done.** Sanitizers, randomized stress, deterministic replay, ABI conformance, and resource-accounting checks are required for trusted-core changes.
 
 ## 3. Working module boundaries
 
-Names are conceptual until the implementation-language decision is complete.
+Names remain provisional package/module names, but the implementation-language decision is complete: the kernel begins in Odin behind a stable versioned C ABI. Provider modules may use C/C++ or another native language when a concrete integration justifies it.
 
 ```text
 media-core-abi
@@ -129,30 +136,29 @@ Tests must cover:
 
 **Exit criterion:** exact arithmetic and conversion rules are specified independently of implementation language.
 
-### 4.2 Implementation-language/ABI bakeoff
+### 4.2 Implementation-language/ABI bakeoff — COMPLETE
 
-The stable ABI is the hard commitment; internal language is not.
+The stable ABI remains the hard commitment. The implementation-language investigation progressed through three increasingly realistic experiments:
 
-Benchmark a small representative kernel slice in:
+1. a semantic/C-ABI slice across Rust, C++, Zig, and Odin;
+2. a whole-architecture slice covering revisioned state, candidate commits, generational resources, typed execution DAGs, and randomized invalid-operation stress;
+3. the final concurrent/asynchronous ownership gate covering bounded queues, backpressure, multiple producers/workers, cancellation, deferred reclamation behind simulated fences, device/provider loss, sanitizer checks, ThreadSanitizer, and a real Mesa/llvmpipe Vulkan fence lifecycle.
 
-- Rust;
-- C++;
-- optionally Zig if it remains competitive after ecosystem/FFI review.
+All four candidates passed the common release concurrency matrix with zero kernel violations, stale-handle acceptance, or leaked resources. C++, Odin, and Rust also passed ThreadSanitizer race probes; Odin and C++ passed AddressSanitizer-based stress; Zig passed ReleaseSafe stress.
 
-Measure:
+The final decision is documented in `docs/media-kernel-final-language-gate.md`:
 
-- C ABI ergonomics;
-- FFmpeg/libav interop;
-- GStreamer/libplacebo/OpenColorIO interop;
-- opaque-handle ownership safety;
-- plugin-call overhead;
-- graph construction/traversal overhead;
-- reference counting/arena strategies;
-- build/package complexity;
-- sanitizer/fuzzing support;
-- cross-platform toolchain maturity.
+```text
+Primary kernel implementation: Odin
+Durable external contract:      stable versioned C ABI
+Native provider languages:      C/C++ first-class where justified
+Safety-first fallback:          Rust
+Zig:                            allowed for a concrete narrow advantage
+```
 
-**Current prior:** Rust core + stable C ABI is attractive, but this phase must validate it rather than assume it.
+The decisive finding is not that Odin is safer than Rust. It is that once ownership-relevant media semantics are explicit kernel concepts—stable IDs, candidate commits, generation handles, resource stores, bounded queues, submission/fence state, cancellation, and provider-loss accounting—the Odin implementation remained comparably direct under concurrency without growing a home-made borrow checker or an unmanageable race surface.
+
+**Exit criterion: SATISFIED.** Do not reopen general language selection during Phase 1 unless a reconsideration trigger from the final language decision record is hit.
 
 ### 4.3 Canonical IR research spike
 
@@ -194,12 +200,14 @@ LoweringReport
 - architecture decision records;
 - exact-time specification;
 - ABI v0 schema;
-- language bakeoff report;
+- completed language-gate decision record;
 - first vertical-slice executable specification.
 
 ## 5. Phase 1 — State kernel and operation model
 
 **Goal:** prove durable media state without any rendering dependency.
+
+**Implementation:** Odin. Keep the State/IR core free of provider-specific objects and preserve the stable-ID/candidate-commit rules proven in the language gates.
 
 ### Minimal persistent model
 
@@ -353,7 +361,7 @@ Each operation/node contract should declare where applicable:
 
 Use FFmpeg because Declip already provides concrete compiler experience and synthetic integration fixtures.
 
-The FFmpeg backend should be treated as an implementation provider, not as the semantic model.
+The FFmpeg backend should be treated as an implementation provider, not as the semantic model. Direct C integration from Odin is acceptable; a narrow C/C++ adapter is equally acceptable when it reduces integration risk.
 
 ### Planner outputs
 
@@ -550,6 +558,8 @@ Provide backend-neutral resource handles and capability negotiation for combinat
 - CUDA/hardware surfaces;
 - external/imported handles.
 
+Preserve the concurrency-gate rules: resources stay alive through explicit submission/fence completion, cancellation, or provider-loss accounting, and stale generations must be rejected.
+
 Do not make one GPU API canonical.
 
 ### Audio
@@ -643,7 +653,13 @@ The kernel should be unusually test-driven because its value is semantic trust.
 - preview/final semantic equivalence;
 - admission-profile reproducibility;
 - ABI compatibility/unknown-field preservation;
-- fuzzing of serialized IR and edit operations.
+- fuzzing of serialized IR and edit operations;
+- concurrent resource retain/release;
+- generation-safe reuse under contention;
+- bounded-queue/backpressure behavior;
+- asynchronous completion/fence reclamation;
+- cancellation and provider/device-loss cleanup;
+- sanitizer/race-detector stress on trusted runtime paths.
 
 ### Golden media fixtures
 
@@ -670,10 +686,11 @@ Before writing the first persistent kernel implementation:
 4. Specify `LoweringReport` and `LoweringLoss` taxonomy.
 5. Specify dependency and invalidation contracts.
 6. Specify the first acceptance vector/profile.
-7. Run Rust/C++/optional-Zig C-ABI bakeoff.
+7. **COMPLETE:** freeze Odin + stable C ABI through semantic, architectural, concurrency, sanitizer, and race-detector bakeoffs.
 8. Prototype OTIO-like editorial IR versus custom/MLIR-inspired representation.
 9. Map Declip's current schema/render-plan concepts onto the proposed kernel types.
 10. Define the synthetic end-to-end vertical-slice fixture and expected hashes/semantics.
+11. Create the dedicated kernel repository with Odin-oriented module/package scaffolding before Phase 1 implementation begins.
 
 ## 18. Primary success metric
 
