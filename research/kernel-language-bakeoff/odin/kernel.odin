@@ -257,11 +257,13 @@ append_time :: proc(dst: []u8, pos: ^int, value: Time) -> bool {
 
 @(export, link_name="mk_time_normalize")
 mk_time_normalize :: proc "c" (input: Time, output: ^Time) -> c.int {
+    context = runtime.default_context()
     return MK_OK if normalize(input, output) else MK_INVALID
 }
 
 @(export, link_name="mk_time_add")
 mk_time_add :: proc "c" (a, b: Time, output: ^Time) -> c.int {
+    context = runtime.default_context()
     if output == nil {
         return MK_INVALID
     }
@@ -270,6 +272,7 @@ mk_time_add :: proc "c" (a, b: Time, output: ^Time) -> c.int {
 
 @(export, link_name="mk_time_compare")
 mk_time_compare :: proc "c" (a, b: Time) -> c.int {
+    context = runtime.default_context()
     return compare(a, b)
 }
 
@@ -286,23 +289,26 @@ mk_project_create :: proc "c" () -> rawptr {
 
 @(export, link_name="mk_project_destroy")
 mk_project_destroy :: proc "c" (handle: rawptr) {
+    context = runtime.default_context()
     if handle == nil {
         return
     }
-    context = runtime.default_context()
     free(cast(^Project)handle)
 }
 
 @(export, link_name="mk_project_revision")
 mk_project_revision :: proc "c" (handle: rawptr) -> u64 {
+    context = runtime.default_context()
     if handle == nil {
         return 0
     }
-    return cast(^Project)handle.revision
+    project := cast(^Project)handle
+    return project.revision
 }
 
 @(export, link_name="mk_project_add_asset")
 mk_project_add_asset :: proc "c" (handle: rawptr, id: cstring, duration: Time) -> c.int {
+    context = runtime.default_context()
     if handle == nil || id == nil || !positive(duration) {
         return MK_INVALID
     }
@@ -328,6 +334,7 @@ mk_project_add_asset :: proc "c" (handle: rawptr, id: cstring, duration: Time) -
 
 @(export, link_name="mk_project_append_clip")
 mk_project_append_clip :: proc "c" (handle: rawptr, asset_id: cstring, source_in, duration, transition_in: Time) -> c.int {
+    context = runtime.default_context()
     if handle == nil || asset_id == nil {
         return MK_INVALID
     }
@@ -354,6 +361,7 @@ mk_project_append_clip :: proc "c" (handle: rawptr, asset_id: cstring, source_in
 
 @(export, link_name="mk_project_propose_trim")
 mk_project_propose_trim :: proc "c" (handle: rawptr, base_revision: u64, clip_index: uintptr, duration: Time, out_proposal: ^u64) -> c.int {
+    context = runtime.default_context()
     if handle == nil || out_proposal == nil {
         return MK_INVALID
     }
@@ -384,6 +392,7 @@ mk_project_propose_trim :: proc "c" (handle: rawptr, base_revision: u64, clip_in
 
 @(export, link_name="mk_project_commit")
 mk_project_commit :: proc "c" (handle: rawptr, proposal_id: u64, out_revision: ^u64) -> c.int {
+    context = runtime.default_context()
     if handle == nil || out_revision == nil {
         return MK_INVALID
     }
@@ -416,6 +425,7 @@ mk_project_commit :: proc "c" (handle: rawptr, proposal_id: u64, out_revision: ^
 
 @(export, link_name="mk_project_lower_ffmpeg")
 mk_project_lower_ffmpeg :: proc "c" (handle: rawptr, buffer: rawptr, capacity: uintptr, needed: ^uintptr) -> c.int {
+    context = runtime.default_context()
     if handle == nil || needed == nil {
         return MK_INVALID
     }
@@ -472,11 +482,13 @@ mk_project_lower_ffmpeg :: proc "c" (handle: rawptr, buffer: rawptr, capacity: u
 
 @(export, link_name="mk_ffmpeg_version")
 mk_ffmpeg_version :: proc "c" () -> u32 {
+    context = runtime.default_context()
     return avformat_version()
 }
 
 @(export, link_name="mk_benchmark")
 mk_benchmark :: proc "c" (iterations: u64) -> u64 {
+    context = runtime.default_context()
     x := Time{1001, 30000}
     y := Time{1, 48000}
     z: Time
@@ -486,7 +498,7 @@ mk_benchmark :: proc "c" (iterations: u64) -> u64 {
         if !add_exact(x, y, &z) {
             break
         }
-        sum ^= u64(z.num) + u64(z.den) + i
+        sum ~= u64(z.num) + u64(z.den) + i
         x = Time{1001, 30000} if (i & 1) != 0 else Time{1, 24}
         i += 1
     }
