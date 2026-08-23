@@ -38,7 +38,7 @@ jobs:
             echo "libavformat=$(pkg-config --modversion libavformat)"
           } | tee toolchains.txt
 
-      - name: Build all candidates
+      - name: Build all candidates and measure cold/warm loops
         shell: bash
         run: |
           set -euo pipefail
@@ -46,15 +46,31 @@ jobs:
           SRC="$ROOT/research/kernel-language-bakeoff"
           mkdir -p "$ROOT/build"
 
-          /usr/bin/time -f "%e" -o "$ROOT/build/cpp.time" \
+          # Cold build on a fresh runner.
+          /usr/bin/time -f "%e" -o "$ROOT/build/cpp.cold.time" \
             g++ -std=c++20 -O3 -DNDEBUG -fPIC -shared \
             "$SRC/cpp/kernel.cpp" -lavformat -o "$ROOT/build/libmk_cpp.so"
 
-          /usr/bin/time -f "%e" -o "$ROOT/build/rust.time" \
+          /usr/bin/time -f "%e" -o "$ROOT/build/rust.cold.time" \
             cargo build --release --manifest-path "$SRC/rust/Cargo.toml"
           cp "$SRC/rust/target/release/libmk_bakeoff_rust.so" "$ROOT/build/libmk_rust.so"
 
-          /usr/bin/time -f "%e" -o "$ROOT/build/zig.time" \
+          /usr/bin/time -f "%e" -o "$ROOT/build/zig.cold.time" \
+            zig build-lib "$SRC/zig/kernel.zig" -dynamic -OReleaseFast -lc -lavformat \
+            -femit-bin="$ROOT/build/libmk_zig.so"
+
+          # Immediate no-change rebuild. This is intentionally a development-loop
+          # measure, not a clean rebuild: Cargo and Zig may reuse their own caches;
+          # g++ recompiles the TU but benefits from warm filesystem/header caches.
+          /usr/bin/time -f "%e" -o "$ROOT/build/cpp.warm.time" \
+            g++ -std=c++20 -O3 -DNDEBUG -fPIC -shared \
+            "$SRC/cpp/kernel.cpp" -lavformat -o "$ROOT/build/libmk_cpp.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/build/rust.warm.time" \
+            cargo build --release --manifest-path "$SRC/rust/Cargo.toml"
+          cp "$SRC/rust/target/release/libmk_bakeoff_rust.so" "$ROOT/build/libmk_rust.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/build/zig.warm.time" \
             zig build-lib "$SRC/zig/kernel.zig" -dynamic -OReleaseFast -lc -lavformat \
             -femit-bin="$ROOT/build/libmk_zig.so"
 
@@ -62,16 +78,22 @@ jobs:
           strip --strip-unneeded "$ROOT/build/libmk_rust.so"
           strip --strip-unneeded "$ROOT/build/libmk_zig.so"
 
-          echo "Build times:"
+          echo "Cold build times:"
           paste -d' ' <(printf 'C++\nRust\nZig\n') \
-            <(cat "$ROOT/build/cpp.time" "$ROOT/build/rust.time" "$ROOT/build/zig.time")
+            <(cat "$ROOT/build/cpp.cold.time" "$ROOT/build/rust.cold.time" "$ROOT/build/zig.cold.time")
+          echo "Warm no-change rebuild times:"
+          paste -d' ' <(printf 'C++\nRust\nZig\n') \
+            <(cat "$ROOT/build/cpp.warm.time" "$ROOT/build/rust.warm.time" "$ROOT/build/zig.warm.time")
           ls -l "$ROOT/build"/*.so
 
       - name: Run equivalent C ABI scenarios and benchmark
         env:
-          MK_CPP_BUILD_TIME: ${{ github.workspace }}/build/cpp.time
-          MK_RUST_BUILD_TIME: ${{ github.workspace }}/build/rust.time
-          MK_ZIG_BUILD_TIME: ${{ github.workspace }}/build/zig.time
+          MK_CPP_BUILD_TIME: ${{ github.workspace }}/build/cpp.cold.time
+          MK_RUST_BUILD_TIME: ${{ github.workspace }}/build/rust.cold.time
+          MK_ZIG_BUILD_TIME: ${{ github.workspace }}/build/zig.cold.time
+          MK_CPP_WARM_BUILD_TIME: ${{ github.workspace }}/build/cpp.warm.time
+          MK_RUST_WARM_BUILD_TIME: ${{ github.workspace }}/build/rust.warm.time
+          MK_ZIG_WARM_BUILD_TIME: ${{ github.workspace }}/build/zig.warm.time
           MK_BENCH_ITERATIONS: "10000000"
           MK_BENCH_ROUNDS: "7"
         run: |
