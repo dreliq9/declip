@@ -4,12 +4,14 @@ import re
 import statistics
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 RESULT_RE = re.compile(r"\b([A-Za-z_]+)=([^\s]+)")
 
 
 def run_case(exe: Path, seed: int, workers: int, producers: int, ops: int, qcap: int, loss: int):
+    started = time.perf_counter()
     proc = subprocess.run(
         [str(exe.resolve()), str(seed), str(workers), str(producers), str(ops), str(qcap), str(loss)],
         text=True,
@@ -17,6 +19,7 @@ def run_case(exe: Path, seed: int, workers: int, producers: int, ops: int, qcap:
         stderr=subprocess.STDOUT,
         timeout=45,
     )
+    elapsed = time.perf_counter() - started
     lines = [line for line in proc.stdout.splitlines() if line.startswith("RESULT ")]
     if proc.returncode != 0 or len(lines) != 1:
         raise RuntimeError(f"{exe.name} failed rc={proc.returncode}\n{proc.stdout}")
@@ -24,7 +27,8 @@ def run_case(exe: Path, seed: int, workers: int, producers: int, ops: int, qcap:
     ints = ["seed", "workers", "producers", "ops", "loss", "submitted", "completed", "cancelled", "lost", "backpressure", "max_queue", "retain", "release", "stale_accepts", "leaked", "violations"]
     for key in ints:
         row[key] = int(row[key])
-    row["seconds"] = float(row["seconds"])
+    row["reported_seconds"] = float(row["seconds"])
+    row["seconds"] = elapsed
     if row["violations"] != 0 or row["stale_accepts"] != 0 or row["leaked"] != 0:
         raise AssertionError(row)
     if row["completed"] + row["cancelled"] + row["lost"] != row["submitted"]:
