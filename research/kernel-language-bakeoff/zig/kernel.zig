@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @cImport({
     @cInclude("stdlib.h");
+    @cInclude("libavformat/avformat.h");
 });
 
 const MK_OK: i32 = 0;
@@ -207,6 +208,8 @@ export fn mk_project_lower_ffmpeg(p_opt: ?*const Project, buffer: ?[*]u8, capaci
     out[pos] = 0;
     return MK_OK;
 }
+
+export fn mk_ffmpeg_version() u32 { return c.avformat_version(); }
 
 export fn mk_benchmark(iterations: u64) u64 {
     var x = Time{ .num = 1001, .den = 30000 };
