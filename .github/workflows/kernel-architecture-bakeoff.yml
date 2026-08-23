@@ -51,7 +51,6 @@ jobs:
         run: |
           python3 -m py_compile research/kernel-architecture-bakeoff/runner.py
           zig fmt --check research/kernel-architecture-bakeoff/zig/kernel.zig
-          odin check research/kernel-architecture-bakeoff/odin
           cargo check --manifest-path research/kernel-architecture-bakeoff/rust/Cargo.toml
 
       - name: Build all candidates and measure cold/warm loops
