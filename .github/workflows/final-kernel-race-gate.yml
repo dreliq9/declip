@@ -1,0 +1,98 @@
+name: Final media-kernel race detector gate
+
+on:
+  pull_request:
+    branches:
+      - planning/media-kernel
+  workflow_dispatch:
+
+jobs:
+  race-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang
+          curl -fsSL https://github.com/odin-lang/Odin/releases/download/dev-2026-08/odin-linux-amd64-dev-2026-08.tar.gz -o /tmp/odin.tar.gz
+          mkdir -p /tmp/odin-dist
+          tar -C /tmp/odin-dist -xzf /tmp/odin.tar.gz
+          ODIN_BIN="$(find /tmp/odin-dist -type f -name odin -perm -111 | head -1)"
+          test -n "$ODIN_BIN"
+          echo "$(dirname "$ODIN_BIN")" >> "$GITHUB_PATH"
+          rustup toolchain install nightly --profile minimal --component rust-src
+
+      - name: Prepare common sources
+        run: python3 research/kernel-final-concurrency-bakeoff/prepare_sources.py
+
+      - name: Build TSan candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$PWD/research/kernel-final-concurrency-bakeoff"
+          mkdir -p race-build race-results
+
+          set +e
+          g++ -std=c++20 -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=thread \
+            "$SRC/cpp/main.cpp" -o race-build/cpp-tsan >race-results/cpp-build.log 2>&1
+          echo $? > race-results/cpp-build.status
+
+          odin build "$SRC/odin" -o:speed -sanitize:thread -out:"$PWD/race-build/odin-tsan" \
+            >race-results/odin-build.log 2>&1
+          echo $? > race-results/odin-build.status
+
+          RUSTFLAGS="-Zsanitizer=thread" cargo +nightly build -Zbuild-std --target x86_64-unknown-linux-gnu --release \
+            --manifest-path "$SRC/rust/Cargo.toml" >race-results/rust-build.log 2>&1
+          RUST_BUILD=$?
+          echo "$RUST_BUILD" > race-results/rust-build.status
+          if [ "$RUST_BUILD" -eq 0 ]; then
+            cp "$SRC/rust/target/x86_64-unknown-linux-gnu/release/mk_final_concurrency_rust" race-build/rust-tsan
+          fi
+          set -e
+
+          for lang in cpp odin rust; do
+            echo "$lang build_status=$(cat race-results/$lang-build.status)"
+            tail -30 "race-results/$lang-build.log" || true
+          done | tee race-build-summary.txt
+
+      - name: Run TSan probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p race-results
+          set +e
+          for lang in cpp odin rust; do
+            build_status=$(cat "race-results/$lang-build.status")
+            if [ "$build_status" -ne 0 ] || [ ! -x "race-build/$lang-tsan" ]; then
+              echo 125 > "race-results/$lang-run.status"
+              echo "TSAN_BUILD_UNAVAILABLE" > "race-results/$lang-run.log"
+              continue
+            fi
+            TSAN_OPTIONS="halt_on_error=1 history_size=7" timeout 30s "race-build/$lang-tsan" 9001 8 8 240 16 0 \
+              >"race-results/$lang-run.log" 2>&1
+            echo $? > "race-results/$lang-run.status"
+          done
+          set -e
+
+          for lang in cpp odin rust; do
+            echo "$lang run_status=$(cat race-results/$lang-run.status)"
+            tail -80 "race-results/$lang-run.log" || true
+          done | tee race-run-summary.txt
+
+          if grep -R -E "WARNING: ThreadSanitizer: data race|ThreadSanitizer: reported.*warning" race-results/*-run.log; then
+            echo "A candidate produced a ThreadSanitizer race report" >&2
+            exit 1
+          fi
+
+      - name: Upload race evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-media-kernel-race-gate
+          path: |
+            race-results/*
+            race-build-summary.txt
+            race-run-summary.txt
