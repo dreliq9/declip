@@ -149,6 +149,11 @@ def main():
         "rust": os.environ.get("MK_RUST_BUILD_TIME", ""),
         "zig": os.environ.get("MK_ZIG_BUILD_TIME", ""),
     }
+    warm_build_time_paths = {
+        "cpp": os.environ.get("MK_CPP_WARM_BUILD_TIME", ""),
+        "rust": os.environ.get("MK_RUST_WARM_BUILD_TIME", ""),
+        "zig": os.environ.get("MK_ZIG_WARM_BUILD_TIME", ""),
+    }
 
     results = {}
     for name, path in libs.items():
@@ -157,7 +162,8 @@ def main():
             "scenario": scenario(lib),
             "benchmark": benchmark(lib, iterations, rounds),
             "binary_bytes": path.stat().st_size,
-            "build_seconds": read_float(build_time_paths[name]) if build_time_paths[name] else None,
+            "cold_build_seconds": read_float(build_time_paths[name]) if build_time_paths[name] else None,
+            "warm_no_change_build_seconds": read_float(warm_build_time_paths[name]) if warm_build_time_paths[name] else None,
             "source": text_metrics(source_paths[name], name),
         }
 
@@ -178,8 +184,10 @@ def main():
         "results": results,
         "notes": {
             "performance": "Synthetic arithmetic benchmark is a runtime sanity check, not a selection criterion.",
+            "builds": "Cold build is from a fresh hosted runner. Warm is an immediate no-change rebuild: Cargo/Zig may reuse tool caches; g++ recompiles the translation unit with warm filesystem/header caches.",
             "zig_storage": "The Zig spike uses explicitly bounded project arrays to avoid hiding allocator/stdlib behavior; this is a bakeoff implementation choice, not the proposed production state model.",
             "abi": "All three implementations expose and pass the same C ABI through Python ctypes and call the same system libavformat.",
+            "loc": "Implementation LOC is recorded for reference only and must not be ranked directly because formatting density differs substantially between the spikes.",
         },
     }
     Path("bakeoff-results.json").write_text(json.dumps(payload, indent=2) + "\n")
@@ -193,9 +201,10 @@ def main():
         "|---|---:|---:|---:|",
     ]
     for label, getter in [
-        ("Build seconds", lambda r: r["build_seconds"]),
+        ("Cold build seconds", lambda r: r["cold_build_seconds"]),
+        ("Warm no-change rebuild seconds", lambda r: r["warm_no_change_build_seconds"]),
         ("Stripped shared library bytes", lambda r: r["binary_bytes"]),
-        ("Nonblank implementation LOC", lambda r: r["source"]["nonblank_loc"]),
+        ("Nonblank implementation LOC (not directly comparable)", lambda r: r["source"]["nonblank_loc"]),
         (f"Median native benchmark seconds ({iterations:,} iterations)", lambda r: r["benchmark"]["median_seconds"]),
     ]:
         vals = []
@@ -216,6 +225,8 @@ def main():
         "",
         "- Performance numbers only establish that none of the candidates has a disqualifying native-runtime problem in this slice.",
         "- The state model is intentionally tiny; the selection must weight ownership safety, semantic expressiveness, ecosystem interop, build maturity, and ABI design more heavily than microbenchmark rank.",
+        "- Warm build numbers are development-loop probes, not equivalent incremental-change builds; Cargo/Zig have integrated caches while raw g++ does not.",
+        "- Implementation LOC is not a valid ranking metric here because the C++ spike is deliberately compressed while Rust/Zig are normally formatted.",
         "- Zig's spike uses bounded arrays, making its memory-management style unusually explicit. A production Zig implementation would need an allocator/arena policy and would likely grow more manual ownership code.",
     ]
     Path("bakeoff-results.md").write_text("\n".join(lines) + "\n")
