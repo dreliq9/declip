@@ -1,4 +1,7 @@
 #include "../common/media_kernel_bakeoff.h"
+extern "C" {
+#include <libavformat/avformat.h>
+}
 #include <algorithm>
 #include <cstring>
 #include <numeric>
@@ -64,5 +67,6 @@ mk_status_t mk_project_append_clip(mk_project_t*p,const char*asset,mk_time_t sou
 mk_status_t mk_project_propose_trim(mk_project_t*p,uint64_t base,size_t idx,mk_time_t dur,uint64_t*out){if(!p||!out||base!=p->revision)return base==p->revision?MK_INVALID:MK_CONFLICT; if(idx>=p->clips.size()||!positive(dur))return MK_INVALID; mk_time_t nd;norm(dur,nd); Clip c=p->clips[idx];c.duration=nd;if(!valid_clip(p,c))return MK_INVALID;uint64_t id=p->next_proposal++;p->proposals.emplace(id,Proposal{id,base,idx,nd});*out=id;return MK_OK;}
 mk_status_t mk_project_commit(mk_project_t*p,uint64_t id,uint64_t*out){if(!p||!out)return MK_INVALID;auto it=p->proposals.find(id);if(it==p->proposals.end())return MK_NOT_FOUND;auto pr=it->second;if(pr.base_revision!=p->revision)return MK_CONFLICT;Clip c=p->clips[pr.clip_index];c.duration=pr.new_duration;if(!valid_clip(p,c))return MK_INVALID;p->clips[pr.clip_index]=c;p->revision++;p->proposals.clear();*out=p->revision;return MK_OK;}
 mk_status_t mk_project_lower_ffmpeg(const mk_project_t*p,char*buf,size_t cap,size_t*needed){if(!p||!needed)return MK_INVALID;std::ostringstream s;s<<"ffmpeg";for(auto &c:p->clips)s<<" -i "<<c.asset;s<<" -filter_complex \"";for(size_t i=0;i<p->clips.size();++i){auto &c=p->clips[i];if(i)s<<";";s<<"["<<i<<":v]trim=start="<<rat(c.source_in)<<":duration="<<rat(c.duration)<<"[v"<<i<<"]";}for(size_t i=1;i<p->clips.size();++i){auto &c=p->clips[i];if(c.transition.num!=0)s<<";[v"<<i-1<<"][v"<<i<<"]xfade=duration="<<rat(c.transition)<<"[x"<<i<<"]";}s<<"\" out.mp4";std::string x=s.str();*needed=x.size()+1;if(!buf||cap<*needed)return MK_BUFFER_TOO_SMALL;std::memcpy(buf,x.c_str(),*needed);return MK_OK;}
+uint32_t mk_ffmpeg_version(void){return avformat_version();}
 uint64_t mk_benchmark(uint64_t iters){mk_time_t x{1001,30000},y{1,48000},z;uint64_t sum=0;for(uint64_t i=0;i<iters;++i){if(!add(x,y,z))break;sum^=(uint64_t)z.num+(uint64_t)z.den+i;x=(i&1)?mk_time_t{1001,30000}:mk_time_t{1,24};}return sum;}
 }
