@@ -9,6 +9,11 @@ const MK_CONFLICT: c_int = 3;
 const MK_BUFFER_TOO_SMALL: c_int = 4;
 const MK_OVERFLOW: c_int = 5;
 
+#[link(name = "avformat")]
+extern "C" {
+    fn avformat_version() -> u32;
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct MkTime {
@@ -251,6 +256,11 @@ pub extern "C" fn mk_project_lower_ffmpeg(project: *const Project, buffer: *mut 
         *buffer.add(bytes.len()) = 0;
     }
     MK_OK
+}
+
+#[no_mangle]
+pub extern "C" fn mk_ffmpeg_version() -> u32 {
+    unsafe { avformat_version() }
 }
 
 #[no_mangle]
