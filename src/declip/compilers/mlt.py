@@ -157,9 +157,21 @@ def _timeline_length_frames(project: Project, fps: int) -> int:
     return max(1, seconds_to_frames(end_seconds, fps))
 
 
-def _build_producer(root: Element, asset: str, producer_id: str, project_dir: Path) -> str:
+def _build_producer(
+    root: Element,
+    asset: str,
+    producer_id: str,
+    project_dir: Path,
+    resolution: tuple[int, int] | None = None,
+) -> str:
     producer = SubElement(root, "producer", id=producer_id)
     add_property(producer, "resource", resolve_asset(asset, project_dir))
+    if resolution is not None:
+        width, height = resolution
+        scale = SubElement(producer, "filter")
+        add_property(scale, "mlt_service", "avfilter.scale")
+        add_property(scale, "av.w", str(width))
+        add_property(scale, "av.h", str(height))
     return producer_id
 
 
@@ -211,6 +223,7 @@ def _compile_normalized(project: Project, project_dir: Path) -> ElementTree:
                 clip.asset,
                 producer_id,
                 project_dir,
+                (width, height),
             )
             producer_index += 1
 

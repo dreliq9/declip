@@ -23,6 +23,7 @@ from declip.compilers.mlt import (
 from declip.compilers.render_plan import RenderPlanError
 from declip.filters.mlt import seconds_to_frames
 from declip.output import OutputManager
+from declip.probe import probe
 from declip.schema import Project
 
 __all__ = ["compile_xml", "compile_to_string", "render"]
@@ -57,12 +58,11 @@ def render(project: Project, project_dir: Path, out: OutputManager, total_durati
 
     normalized = compiled.plan.project
     output_path = resolve_output_path(normalized, compiled.plan.project_dir)
-    width, height = normalized.settings.resolution
     command = [
         melt_bin, xml_path,
         "-consumer", f"avformat:{output_path}",
         "real_time=-1",
-        f"width={width}", f"height={height}",
+        "progressive=1",
         f"vcodec={encoder_for(normalized)}", f"vb={bitrate_for(normalized)}",
         f"acodec={normalized.output.audio_codec}", f"ab={normalized.output.audio_bitrate}",
         "terminate_on_pause=1",
@@ -84,6 +84,15 @@ def render(project: Project, project_dir: Path, out: OutputManager, total_durati
 
     if proc.returncode != 0:
         out.error("render", f"melt failed (exit {proc.returncode}): {''.join(stderr_lines[-10:])}")
+        return False
+
+    try:
+        rendered = probe(output_path)
+    except Exception as exc:
+        out.error("render", f"melt produced an unreadable output: {exc}")
+        return False
+    if rendered.width is None or rendered.height is None:
+        out.error("render", "melt produced output without a video stream")
         return False
 
     out.progress(1.0)
