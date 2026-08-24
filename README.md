@@ -1,16 +1,45 @@
 # declip
 
-Declarative video editing — JSON in, video out. Plus an MCP server so AI agents can drive a real editor.
+Declarative video editing — JSON in, video out. Declip is an AI-native media engine with CLI and MCP adapters, not an MCP implementation with video code embedded inside it.
 
 ## What it does
 
-You write a project as JSON (timeline, clips, transitions, filters, output) and `declip` renders it via FFmpeg. No GUI, no NLE, no clicks — just structured data and a command.
+A Declip project describes a timeline, clips, transitions, filters, audio, and output settings as structured data. Declip normalizes that project into a render plan, compiles the plan for a backend, and executes it.
 
-It also ships:
+Current surfaces:
 
-- A **CLI** with quick utilities (probe, trim, concat, thumbnail, scene detection, silence detection, loudness, transcription, review reports)
-- An **MCP server** (`declip-mcp`) that exposes the toolbox to MCP-compatible AI agents (Claude Code, Cursor, etc.)
-- An **MLT export** path for round-tripping into Shotcut / Kdenlive when you want a GUI
+- **Python library** for projects, operations, analysis, and workflow recipes
+- **CLI** (`declip`) for rendering and one-shot media operations
+- **MCP server** (`declip-mcp`) for AI agents
+- **FFmpeg compiler/backend** for single-track projects
+- **MLT compiler/backend** for compositing, dedicated audio tracks, and GUI round-tripping to Shotcut/Kdenlive
+- **Workflow library** for ingest, cutdown, speech cleanup, beat sync, vertical conversion, and review
+- **Generation integration** with a cached live fal.ai model catalog
+
+## Architecture
+
+The core boundary is deliberately transport-neutral:
+
+```text
+CLI / MCP / Python
+        |
+        v
+Project schema + capability APIs + typed results
+        |
+        v
+Render-plan normalization
+        |
+        v
+Backend compiler (FFmpeg / MLT)
+        |
+        v
+Execution backend
+        |
+        v
+Media output
+```
+
+`src/declip/mcp/` is an adapter layer. Backend-native filter construction lives in `src/declip/filters/`; compilation lives in `src/declip/compilers/`; process execution lives in `src/declip/backends/`. See `docs/architecture.md` for the boundary rules.
 
 ## Install
 
@@ -18,7 +47,17 @@ It also ships:
 pip install -e .
 ```
 
-Requires Python 3.11+, FFmpeg in `PATH`, and Tesseract for OCR features.
+Requires Python 3.11+ and FFmpeg in `PATH`. Tesseract is required for the legacy OCR path.
+
+Optional analysis accelerators are explicit extras:
+
+```bash
+pip install -e '.[analysis]'       # PySceneDetect
+pip install -e '.[vad]'            # Silero VAD + torch
+pip install -e '.[full-analysis]'  # both
+```
+
+The analysis module retains fallbacks when these extras are absent.
 
 ## Quickstart — render a project
 
@@ -26,40 +65,18 @@ Requires Python 3.11+, FFmpeg in `PATH`, and Tesseract for OCR features.
 declip render examples/simple_cut.json
 ```
 
-The schema covers tracks, clips, trims, filters (fades, transitions, drawtext, color), and output settings. See `examples/` for working samples.
-
-## Quickstart — analyze a file
-
-```bash
-declip probe input.mp4              # codec, resolution, duration, streams
-declip detect-scenes input.mp4      # scene boundary timestamps
-declip detect-silence input.mp4     # silence ranges
-declip loudness input.mp4           # integrated LUFS
-declip review input.mp4 -o report/  # full review pack: frames + scenes + silence
-```
-
-All commands accept `--json` for structured NDJSON output, which is what the MCP server uses internally.
-
-## MCP server
-
-```bash
-declip-mcp
-```
-
-Then point your MCP client at the binary. Tools are grouped: `media_tools` (probe, thumbnail, frames), `analysis_tools` (scenes, silence, loudness, transcription), `edit_tools` (trim, concat, filters), `quick_tools` (one-shots), `pipeline_tools`, `generate_tools`, `advanced_tools`, and `project_tools`.
-
-## Project schema (gist)
+Example:
 
 ```json
 {
   "version": "1.0",
-  "settings": { "resolution": [1920, 1080], "fps": 30 },
+  "settings": {"resolution": [1920, 1080], "fps": 30},
   "timeline": {
     "tracks": [{
       "id": "main",
       "clips": [
-        {"asset": "a.mp4", "start": 0,        "trim_in": 0, "trim_out": 3.0},
-        {"asset": "b.mp4", "start": "auto",   "trim_in": 0, "trim_out": 4.0,
+        {"asset": "a.mp4", "start": 0, "trim_in": 0, "trim_out": 3.0},
+        {"asset": "b.mp4", "start": "auto", "trim_in": 0, "trim_out": 4.0,
          "transition_in": {"type": "dissolve", "duration": 1.0}}
       ]
     }]
@@ -68,11 +85,35 @@ Then point your MCP client at the binary. Tools are grouped: `media_tools` (prob
 }
 ```
 
-`start: "auto"` chains clips end-to-end, accounting for transitions.
+`start: "auto"` is resolved by the render-plan compiler, including transition overlap. Backends receive explicit starts and durations instead of independently guessing timeline semantics.
+
+## Quickstart — analyze a file
+
+```bash
+declip probe input.mp4
+declip detect-scenes input.mp4
+declip detect-silence input.mp4
+declip loudness input.mp4
+declip review input.mp4 -o report/
+```
+
+Commands support `--json` where applicable for structured output.
+
+## MCP server
+
+```bash
+declip-mcp
+```
+
+The MCP server exposes Declip capabilities to compatible agents. Structured result models live in `declip.results` and are re-exported from `declip.mcp.types` for backward compatibility; callers do not need MCP to consume the core result contracts.
+
+## Backend selection
+
+Automatic selection is conservative. FFmpeg currently handles one unpositioned video track with clip audio. Projects with multiple video tracks, positioned overlays, or dedicated timeline audio tracks route to MLT so semantics are not silently discarded.
 
 ## Status
 
-Active development. See `CHANGELOG.md` for version history and `AUDIT.md` for the research-backed roadmap (existing-tool fixes + planned capabilities).
+Active development. `AUDIT.md` tracks the current hardening state and `docs/architecture.md` defines the intended boundaries.
 
 ## License
 

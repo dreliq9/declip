@@ -1,0 +1,130 @@
+name: Kernel architecture bakeoff
+
+on:
+  push:
+    branches:
+      - research/kernel-architecture-bakeoff
+  pull_request:
+    branches:
+      - planning/media-kernel
+  workflow_dispatch:
+
+jobs:
+  bakeoff:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev pkg-config
+
+      - name: Install Zig 0.16.0
+        run: |
+          curl -fsSL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o /tmp/zig.tar.xz
+          tar -C /tmp -xf /tmp/zig.tar.xz
+          echo "/tmp/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Install Odin dev-2026-08
+        run: |
+          curl -fsSL https://github.com/odin-lang/Odin/releases/download/dev-2026-08/odin-linux-amd64-dev-2026-08.tar.gz -o /tmp/odin.tar.gz
+          mkdir -p /tmp/odin-dist
+          tar -C /tmp/odin-dist -xzf /tmp/odin.tar.gz
+          ODIN_BIN="$(find /tmp/odin-dist -type f -name odin -perm -111 | head -1)"
+          test -n "$ODIN_BIN"
+          echo "$(dirname "$ODIN_BIN")" >> "$GITHUB_PATH"
+
+      - name: Record toolchains
+        run: |
+          {
+            echo "g++=$(g++ --version | head -1)"
+            echo "rustc=$(rustc --version)"
+            echo "cargo=$(cargo --version)"
+            echo "zig=$(zig version)"
+            echo "odin=$(odin version)"
+            echo "libavformat=$(pkg-config --modversion libavformat)"
+          } | tee architecture-toolchains.txt
+
+      - name: Syntax and source checks
+        run: |
+          python3 -m py_compile research/kernel-architecture-bakeoff/runner.py
+          zig fmt --check research/kernel-architecture-bakeoff/zig/kernel.zig
+          cargo check --manifest-path research/kernel-architecture-bakeoff/rust/Cargo.toml
+
+      - name: Build all candidates and measure cold/warm loops
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$PWD"
+          SRC="$ROOT/research/kernel-architecture-bakeoff"
+          mkdir -p "$ROOT/arch-build"
+
+          /usr/bin/time -f "%e" -o "$ROOT/arch-build/cpp.cold.time" \
+            g++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Werror -fPIC -shared \
+            "$SRC/cpp/kernel.cpp" -lavformat -o "$ROOT/arch-build/libmk_cpp.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/arch-build/rust.cold.time" \
+            cargo build --release --manifest-path "$SRC/rust/Cargo.toml"
+          cp "$SRC/rust/target/release/libmk_arch_bakeoff_rust.so" "$ROOT/arch-build/libmk_rust.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/arch-build/zig.cold.time" \
+            zig build-lib "$SRC/zig/kernel.zig" -dynamic -OReleaseFast -lc -lavformat \
+            -femit-bin="$ROOT/arch-build/libmk_zig.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/arch-build/odin.cold.time" \
+            odin build "$SRC/odin" -build-mode:shared -reloc-mode:pic -o:speed \
+            -out:"$ROOT/arch-build/libmk_odin.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/arch-build/cpp.warm.time" \
+            g++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Werror -fPIC -shared \
+            "$SRC/cpp/kernel.cpp" -lavformat -o "$ROOT/arch-build/libmk_cpp.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/arch-build/rust.warm.time" \
+            cargo build --release --manifest-path "$SRC/rust/Cargo.toml"
+          cp "$SRC/rust/target/release/libmk_arch_bakeoff_rust.so" "$ROOT/arch-build/libmk_rust.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/arch-build/zig.warm.time" \
+            zig build-lib "$SRC/zig/kernel.zig" -dynamic -OReleaseFast -lc -lavformat \
+            -femit-bin="$ROOT/arch-build/libmk_zig.so"
+
+          /usr/bin/time -f "%e" -o "$ROOT/arch-build/odin.warm.time" \
+            odin build "$SRC/odin" -build-mode:shared -reloc-mode:pic -o:speed \
+            -out:"$ROOT/arch-build/libmk_odin.so"
+
+          strip --strip-unneeded "$ROOT/arch-build"/*.so
+          echo "Cold:"; paste -d' ' <(printf 'C++\nRust\nZig\nOdin\n') <(cat arch-build/{cpp,rust,zig,odin}.cold.time)
+          echo "Warm:"; paste -d' ' <(printf 'C++\nRust\nZig\nOdin\n') <(cat arch-build/{cpp,rust,zig,odin}.warm.time)
+          ls -l arch-build/*.so
+
+      - name: Run semantic, resource, DAG, and failure stresses
+        env:
+          MK_CPP_BUILD_TIME: ${{ github.workspace }}/arch-build/cpp.cold.time
+          MK_RUST_BUILD_TIME: ${{ github.workspace }}/arch-build/rust.cold.time
+          MK_ZIG_BUILD_TIME: ${{ github.workspace }}/arch-build/zig.cold.time
+          MK_ODIN_BUILD_TIME: ${{ github.workspace }}/arch-build/odin.cold.time
+          MK_CPP_WARM_BUILD_TIME: ${{ github.workspace }}/arch-build/cpp.warm.time
+          MK_RUST_WARM_BUILD_TIME: ${{ github.workspace }}/arch-build/rust.warm.time
+          MK_ZIG_WARM_BUILD_TIME: ${{ github.workspace }}/arch-build/zig.warm.time
+          MK_ODIN_WARM_BUILD_TIME: ${{ github.workspace }}/arch-build/odin.warm.time
+          MK_BENCH_ITERATIONS: "5000000"
+          MK_BENCH_ROUNDS: "5"
+          MK_RESOURCE_STRESS_OPS: "30000"
+          MK_PLAN_STRESS_CASES: "1200"
+        run: |
+          python3 research/kernel-architecture-bakeoff/runner.py \
+            arch-build/libmk_cpp.so \
+            arch-build/libmk_rust.so \
+            arch-build/libmk_zig.so \
+            arch-build/libmk_odin.so | tee architecture-bakeoff-results.log
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-architecture-bakeoff-results
+          path: |
+            architecture-bakeoff-results.json
+            architecture-bakeoff-results.log
+            architecture-toolchains.txt
+            arch-build/*.time

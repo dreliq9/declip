@@ -1,0 +1,47 @@
+name: Final Rust ThreadSanitizer gate
+
+on:
+  pull_request:
+    branches:
+      - planning/media-kernel
+  workflow_dispatch:
+
+jobs:
+  rust-tsan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly sanitizer toolchain
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+
+      - name: Prepare scheduler source
+        run: |
+          python3 research/kernel-final-concurrency-bakeoff/prepare_sources.py
+          # The normal bakeoff profile uses panic=abort for compact release binaries.
+          # build-std + sanitizer otherwise pulls a sysroot panic runtime and creates
+          # an ABI mismatch/duplicate core. Use the standard panic strategy only for TSan.
+          sed -i '/panic = "abort"/d' research/kernel-final-concurrency-bakeoff/rust/Cargo.toml
+          cargo +nightly clean --manifest-path research/kernel-final-concurrency-bakeoff/rust/Cargo.toml
+
+      - name: Build Rust with instrumented std
+        run: |
+          RUSTFLAGS="-Zsanitizer=thread" cargo +nightly build -Zbuild-std --target x86_64-unknown-linux-gnu --release \
+            --manifest-path research/kernel-final-concurrency-bakeoff/rust/Cargo.toml
+
+      - name: Run Rust ThreadSanitizer stress
+        run: |
+          TSAN_OPTIONS="halt_on_error=1 history_size=7" timeout 30s \
+            research/kernel-final-concurrency-bakeoff/rust/target/x86_64-unknown-linux-gnu/release/mk_final_concurrency_rust \
+            9001 8 8 240 16 0 2>&1 | tee rust-tsan.log
+          if grep -E "WARNING: ThreadSanitizer: data race|ThreadSanitizer: reported.*warning" rust-tsan.log; then
+            exit 1
+          fi
+
+      - name: Upload Rust TSan evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-rust-tsan-gate
+          path: rust-tsan.log

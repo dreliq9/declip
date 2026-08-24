@@ -1,220 +1,179 @@
-# Declip Audit — Research Findings & Upgrade Plan
+# Declip Audit — Current State and Hardening Roadmap
 
-Compiled 2026-03-29 from 6 parallel research agents.
+Updated 2026-08-22. This supersedes the March 2026 audit as the source of truth for current implementation status.
 
----
+The original research was useful, but many items it listed as future work were subsequently implemented. This audit separates completed capability work from current correctness and architecture work.
 
-## PART 1: Existing Tools — What Needs Fixing
+## Current product boundary
 
-### Critical Bugs (fix immediately)
-| Issue | Location | Fix |
-|-------|----------|-----|
-| Watermark filter is `pass` — never implemented | `ffmpeg.py:114-118` | Implement overlay input handling |
-| Project renderer doesn't crossfade audio on transitions | `ffmpeg.py:343-357` | Add `acrossfade` (MCP tool does it, backend doesn't) |
-| `amix` normalizes by default causing volume pumping | `edit_tools.py` audio_mix | Add `normalize=0` to amix filter |
-| Trim has no keyframe awareness — glitchy cuts | `quick_tools.py:37-72` | Add `-avoid_negative_ts make_zero`, offer smart-cut mode |
+Declip is a declarative media engine with multiple control surfaces.
 
-### High-Impact Upgrades (existing tools, better implementations)
-
-| Tool | Current | Best-in-class | Upgrade |
-|------|---------|--------------|---------|
-| **OCR** | Tesseract (0.38 accuracy) | macOS Vision (0.92) | Switch to `ocrmac` on Mac, PaddleOCR cross-platform |
-| **Scene detection** | Manual frame diff | PySceneDetect ContentDetector | pip install pyscenedetect, ~30 lines |
-| **Transcription** | faster-whisper (segment-level) | WhisperX (word-level + diarization) | Add word_timestamps=True, optional WhisperX |
-| **Contact sheet** | Even spacing only | Scene-based sampling | Feed detect_scenes timestamps into contact_sheet |
-| **Loudness** | loudnorm (single number) | ebur128 (time-series) | Switch to ebur128, add momentary/short-term LUFS |
-| **Review pipeline** | 3-phase (frames + scenes + silence) | Add blackdetect + freezedetect | Same FFmpeg filter pattern, catches render bugs |
-| **Audio-to-MIDI** | pYIN (monophonic only) | Spotify basic-pitch (polyphonic) | pip install basic-pitch |
-| **Concat** | Always re-encodes | Smart: demuxer when codecs match | Probe inputs first, use -c copy when possible |
-
-### Medium-Priority Improvements
-
-| Tool | What's Missing | How to Add |
-|------|---------------|-----------|
-| **Transitions** | Only 7 of 44 xfade types | Expand TransitionType enum |
-| **Text overlay** | No outline, shadow, animation | Expose drawtext shadow params; add ASS mode for advanced |
-| **Speed** | No frame interpolation for slow-mo | Add minterpolate option |
-| **Color** | Only eq filter | Add colorbalance, colortemperature, curves, auto-levels |
-| **Stabilize** | Hardcoded smoothing=10 | Expose smoothing, zoom, tripod params |
-| **Reverse** | Loads entire video into RAM | Chunked approach for >30s videos |
-| **Split screen** | No PIP, no borders, drops audio | Add PIP layout, border param, audio_from param |
-| **Subtitle burn** | Uses subtitles= for everything | Auto-detect .ass vs .srt, use ass= filter for ASS |
-| **GIF** | FFmpeg palette only | Optional gifski backend for better quality |
-| **Probe** | Missing HDR, bit depth, bitrate | Expand AssetInfo dataclass |
-
----
-
-## PART 2: New Capabilities to Build
-
-### 1. Auto-Captions (word-level styled subtitles)
-
-**Best approach:** faster-whisper `word_timestamps=True` + VAD → generate ASS with `\k` karaoke tags → FFmpeg `ass=` burn-in.
-
-**Why this beats everything else:**
-- CapCut can't export word-level timing
-- WhisperX is more accurate but heavier (wav2vec2 dependency)
-- We already have faster-whisper installed
-
-**Implementation:**
-```
-audio → faster-whisper (word_timestamps=True, vad_filter=True)
-  → word-level JSON [{word, start, end, confidence}, ...]
-  → Python ASS generator (karaoke \k tags, styled)
-  → FFmpeg ass= filter burn-in
+```text
+CLI / MCP / Python
+        ↓
+Schema + reusable capabilities + typed results
+        ↓
+Normalized render plan
+        ↓
+FFmpeg / MLT compiler
+        ↓
+Execution backend
 ```
 
-**Style presets to offer:**
-- `minimal` — white text, bottom center, no highlight
-- `karaoke` — word-by-word highlight (primary → secondary color)
-- `bold` — large text, center screen, background box (TikTok/Reels style)
-- `news` — lower third, outline, no animation
+MCP and CLI are adapters, not architecture centers. Media semantics belong beneath transport layers so the same implementation can be used by MCP, CLI, workflows, and direct Python callers.
 
-**Key decisions:**
-- Use ASS format (not SRT) — only format that supports word-level animation
-- faster-whisper word timestamps are good enough for most content
-- Add optional WhisperX alignment for precision-critical work
+See `docs/architecture.md` for the boundary contract and backend capability matrix.
 
----
+## Capabilities already implemented
 
-### 2. TTS Voiceover
+The following items from the old audit are no longer roadmap work:
 
-**Best approach:** edge-tts (primary) + macOS `say` (fallback).
+- project-level `start: "auto"` sequencing
+- expanded FFmpeg xfade transition set
+- audio crossfades for FFmpeg transition renders
+- `amix normalize=0` in sidechain mixing
+- smart/keyframe-aware trim and smart concat
+- PySceneDetect integration with fallback
+- black-frame and frozen-frame review checks
+- word-level Whisper transcription
+- ASS auto-captions and burn-in
+- edge-tts voiceover
+- multi-platform export
+- storyboard assembly
+- optical-flow slow motion (`minterpolate`)
+- advanced color balance / temperature / auto-levels
+- chunked long-video reverse
+- two-pass loudness normalization
+- Silero VAD with fallback
+- ingest, cutdown, speech-cleanup, beat-sync, vertical, and review workflows
+- live cached fal.ai model discovery
+- structured probe/trim/concat/thumbnail results
 
-**Why edge-tts wins:**
-- Free neural voices (same as Azure paid API)
-- 400+ voices, 74 languages
-- **Word-level timing metadata** — returns WordBoundary events
-- pip install, no GPU, no API key
-- Quality comparable to ElevenLabs for narration
+## Hardening completed on `hardening/compiler-consolidation`
 
-**Offline alternatives:** Kokoro (82M params, near-commercial quality), Piper (fastest, lightest)
+### Render-plan and compiler boundary
 
-**Implementation:**
-```
-script text → edge-tts (with word boundaries)
-  → WAV audio + word timing JSON
-  → optional: generate ASS captions from same timing data
-  → place on declip timeline
-```
+`compilers/render_plan.py` owns authoring normalization. It deep-copies projects, resolves `start: "auto"`, makes clip durations explicit, and records duration-probe fallbacks as diagnostics.
 
-**Key features:**
-- Voice selection by name (en-US-GuyNeural, en-US-JennyNeural, etc.)
-- Rate/pitch/volume control via SSML
-- Auto-chunk long text at sentence boundaries (<2000 chars per call)
-- Resample output to 48kHz to match video audio
-- Word-level timing output for caption sync
+FFmpeg and MLT compilation moved into `compilers/`; backend modules are execution adapters. Backend-specific filter lowering lives in `filters/`.
 
-**Risk:** edge-tts uses an unofficial Microsoft endpoint. Could be throttled. Mitigate with offline fallback.
+The legacy `Project.resolve_auto_starts()` API delegates to the canonical render-plan logic instead of maintaining a second timeline algorithm.
 
----
+### FFmpeg correctness
 
-### 3. Storyboard Assembly
+The hardening pass fixes several silent semantic losses:
 
-**Best approach:** Shot-list schema that compiles to existing track format + `"start": "auto"` sequential mode.
+- all clip input paths scope `-ss`/`-t` before the intended `-i`
+- multi-clip watermarks are compiled instead of disappearing
+- reverse applies to audio and video in multi-clip projects
+- freeze-frame semantics use shared lowering instead of a single-clip special case
+- hard cuts use real concat rather than a 1 ms fake transition
+- still-image assets are looped for their declared shot duration
+- dedicated timeline audio routes away from FFmpeg instead of being dropped
+- arbitrary manual gaps/overlaps route away from the concat/xfade compiler instead of being collapsed
 
-**Key insight from research:** Every successful declarative video tool (Editly, Shotstack, Remotion) converges on the same pattern. The #1 pain point is manual timestamp math.
+### MLT correctness and capability audit
 
-**Implementation — two features:**
+The MLT compiler was audited against MLT's current transition model. MLT transitions combine two distinct tracks; the old Declip compiler emitted same-track transitions with identical `a_track` and `b_track`, which did not faithfully represent adjacent-clip dissolves.
 
-**A. Auto-sequencing (`start: "auto"`):**
-Add to existing schema. When a clip has `"start": "auto"`, compute placement from previous clip's end minus transition overlap. Eliminates timestamp math entirely.
+The compiler is now fail-preserving instead of falsely permissive:
 
-**B. Shot-list format (higher-level input):**
-```json
-{
-  "shots": [
-    {"asset": "intro.mp4", "duration": 3, "transition": "dissolve"},
-    {"narration": "Welcome to the future", "asset": "hero.mp4"},
-    {"narration": "Everything changed", "b_roll": "explosion.mp4"},
-    {"asset": "outro.mp4", "duration": 5}
-  ],
-  "music": "bg_music.mp3",
-  "voice": "en-US-GuyNeural",
-  "style": "bold"
-}
-```
-This compiles to: TTS generates narration audio → audio duration drives shot timing → auto-caption from same audio → music ducked under speech → full project.json generated → render.
+- `transition_in` and same-track overlap are rejected until a real two-track transition lowering exists
+- explicit clip duration is reflected in finite playlist entry spans
+- timeline gaps are preserved
+- dedicated audio is mixed as a distinct track
+- reverse, freeze-frame, positioned clips, opacity, unsupported filters, and unlowered speech ducking are rejected explicitly
+- project includes are not silently ignored
 
-**Speech duration estimation:** `word_count / 130 * 1.1` (130 WPM + 10% pause buffer). Or generate TTS first and use actual duration.
+`project_ops.prepare_project()` now checks both normalized backend capability matrices. `auto` errors when neither backend can preserve the project instead of selecting a renderer that would drop semantics.
 
----
+### Adapter implementation ownership removed
 
-### 4. Multi-Platform Export
+The largest MCP implementation modules are thin adapters:
 
-**Best approach:** Platform preset profiles + parallel FFmpeg jobs + 3 reframe strategies.
+- `mcp/edit_tools.py` → reusable `declip.edit`
+- `mcp/quick_tools.py` → reusable `declip.quick`
+- `mcp/pipeline_tools.py` → reusable `declip.pipelines.production`
+- `mcp/project_tools.py` → reusable `declip.project_ops`
+- advanced batch rendering → `declip.project_ops.batch_render`
 
-**Three reframe targets cover everything:**
-- 16:9 → YouTube, LinkedIn, Twitter (master as-is)
-- 9:16 → Shorts, Reels, TikTok (needs reframe)
-- 1:1 or 4:5 → Instagram Feed (needs crop)
+The CLI was similarly consolidated. `cli_adapter.py` owns the Click command surface and delegates project preparation, quick operations, processing, generation, analysis, and workflows to core modules. `declip.cli:main` remains a compatibility shim, and the package script points directly to `declip.cli_adapter:main`.
 
-**Reframe strategies (user picks per export):**
-- `center_crop` — fast, loses edges
-- `blur_bg` — blurred zoomed copy behind sharp original (looks pro)
-- `smart_crop` — offset the crop window (manual x offset or future AI)
+Boundary tests enforce that thin MCP/CLI adapters do not own subprocess execution and enumerate the preserved CLI command/workflow surface.
 
-**Platform presets:**
+The move exposed and fixed additional bugs: basic+advanced color grading no longer performs an unused extra encode; image-overlay sizing uses the probed main-video width; freeze-frame generation no longer limits the final output to one frame; storyboard narration is explicitly mixed rather than represented as an FFmpeg timeline audio track that the old backend ignored.
 
-| Preset | Resolution | Aspect | LUFS | Max Size | Codec |
-|--------|-----------|--------|------|----------|-------|
-| `youtube` | 1920x1080 | 16:9 | -14 | 256 GB | h264/aac |
-| `youtube-4k` | 3840x2160 | 16:9 | -14 | 256 GB | h264/aac |
-| `shorts` | 1080x1920 | 9:16 | -14 | 256 GB | h264/aac |
-| `reels` | 1080x1920 | 9:16 | -11 | 4 GB | h264/aac |
-| `tiktok` | 1080x1920 | 9:16 | -11 | 287 MB | h264/aac |
-| `twitter` | 1280x720 | 16:9 | -14 | 512 MB | h264/aac |
-| `linkedin` | 1920x1080 | 16:9 | -14 | 5 GB | h264/aac |
-| `instagram-feed` | 1080x1080 | 1:1 | -11 | 4 GB | h264/aac |
-| `instagram-4x5` | 1080x1350 | 4:5 | -11 | 4 GB | h264/aac |
+### Production-pipeline hardening
 
-**Implementation:**
-```
-master.mp4 + platform list
-  → parallel FFmpeg jobs (one per platform)
-  → each: reframe → loudnorm to target LUFS → encode
-  → output: youtube.mp4, tiktok.mp4, reels.mp4, etc.
-```
+The extracted production pipeline also received correctness fixes:
 
-**Key details:**
-- Always export at CRF 18, let platforms re-compress
-- Target -1.5 dBTP true peak (platforms clip at 0)
-- Add `-colorspace bt709` tags to prevent color shifts
-- Burned-in captions for vertical (standard for short-form)
-- Use parallel jobs (Pattern B) not single-command multi-output
+- center-crop scales to cover before cropping, avoiding invalid crop widths on narrow sources
+- platform export handles video without audio instead of always applying loudness filters
+- storyboard accepts FFmpeg-style `fade` as schema `dissolve` and validates transitions before project construction
+- TTS provider calls work from synchronous callers even when an event loop is already active
+- missing or stalled `ffprobe` no longer turns a successful TTS generation into a pipeline failure
+- storyboard narration/music mixing handles source videos with no existing audio stream
 
----
+### Typed core results
 
-## PART 3: Priority Order
+Probe/trim/concat/thumbnail result models live in `declip.results`; `declip.mcp.types` re-exports them for compatibility. Production pipelines return a transport-neutral `PipelineResult` internally while MCP preserves the previous human-readable text surface.
 
-### Phase 1 — Fix what's broken (quick wins)
-1. Fix watermark `pass` in ffmpeg.py
-2. Fix audio crossfade in project renderer
-3. Fix amix normalize=0
-4. Add -avoid_negative_ts to trim
-5. Switch OCR to ocrmac on macOS
-6. Scene detection → PySceneDetect
-7. Contact sheet: scene-based sampling
-8. Review pipeline: add blackdetect + freezedetect
+### Dependency/version drift
 
-### Phase 2 — New pipeline tools
-9. Auto-captions (faster-whisper word-level → ASS → burn-in)
-10. TTS voiceover (edge-tts with word timing)
-11. Multi-platform export (presets + reframe + loudnorm)
-12. Auto-sequencing (`start: "auto"` in schema)
+`declip.__version__` is synchronized with `pyproject.toml` at 0.8.0. Optional analysis dependencies are explicit extras:
 
-### Phase 3 — Polish existing tools
-13. Smart trim (keyframe-aware hybrid cut)
-14. Smart concat (demuxer when codecs match)
-15. Expand transitions to all 44 xfade types
-16. Loudness upgrade (ebur128 time-series)
-17. Transcription word-level (faster-whisper word_timestamps=True)
-18. Chunked reverse for long videos
+- `analysis`: PySceneDetect
+- `vad`: Silero VAD + torch
+- `full-analysis`: both
 
-### Phase 4 — Advanced
-19. Shot-list format → project compiler
-20. minterpolate slow-mo
-21. colorbalance/curves/temperature
-22. basic-pitch for polyphonic MIDI
-23. Silero VAD for speech detection
-24. gifski backend
-25. Smart reframe with face detection (future)
+## Test posture
+
+The branch contains regression coverage for:
+
+- render-plan normalization and legacy API compatibility
+- FFmpeg input-option scoping
+- multi-clip watermarks
+- reverse-audio parity
+- freeze-frame compilation and file-edit behavior
+- still-image duration handling
+- manual timeline gap/overlap routing
+- dedicated-audio backend selection
+- no-compatible-backend failures
+- MLT normalization, finite clip spans, gap preservation, and capability rejection
+- transport-neutral result compatibility
+- MCP/CLI adapter boundaries and CLI command-surface preservation
+- single-pass combined color grading
+- project validation of filter assets
+- ASS generation, transition aliases, and reframe filter construction
+
+Executable synthetic-media integration tests are also committed:
+
+- FFmpeg two-clip concat
+- FFmpeg dissolve timing
+- FFmpeg still-image duration
+- FFmpeg multi-clip watermark render
+- MLT bounded/trimmed smoke render when `melt` is available
+
+The initial compiler extraction was exercised with a 12-test local harness. The current environment cannot clone and execute the complete GitHub branch checkout, so the expanded committed suite has not been run end-to-end here. That is now the principal verification gap before merge; the missing coverage itself has been written.
+
+## Remaining engineering work
+
+The broad architecture/hardening pass is complete. Remaining work is narrower:
+
+1. **Execute the full committed suite in a normal checkout.** This is the immediate pre-merge gate. Run unit tests plus the renderer integration fixtures with FFmpeg; run the MLT smoke fixture wherever `melt` is installed.
+2. **Implement real MLT transition lowering if MLT transition support is required.** The current compiler correctly rejects it rather than emitting invalid same-track XML. A future implementation should construct overlapping A/B tracks in accordance with MLT's model.
+3. **Richer typed results.** Analysis, media, generation, edit, and project operations still use human-readable strings in several core paths. Add domain-specific result models where agents benefit from structured fields.
+4. **Resolve speed/duration semantics.** The v1 schema still has ambiguity between source span, explicit timeline duration, and speed filters. Resolve this in the normalized IR before expanding retiming features.
+5. **Generation argument schemas.** Live model discovery exists, but model-specific fal.ai parameter schemas remain curated/hardcoded for selected families.
+
+## Research items still genuinely deferred
+
+- WhisperX alignment/diarization for precision transcription
+- basic-pitch polyphonic audio-to-MIDI
+- face/object-aware smart reframing
+- gifski output backend
+- richer waveform/marker visualization
+
+## Priority
+
+Do not add another broad feature wave before the committed suite has been executed in a normal checkout. After that verification gate, the architecture is sufficiently consolidated for feature development to resume without reintroducing the old transport/backend boundary problems.
