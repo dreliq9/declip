@@ -48,8 +48,14 @@ Object_Ref :: struct {
 Object_Ref_View :: struct { data: rawptr, count: u64 }
 
 Color_Descriptor :: struct {
-    primaries, transfer, matrix, range: u32,
-    chroma_location, alpha_mode, bit_depth, flags: u32,
+    primaries: u32,
+    transfer: u32,
+    matrix_coefficients: u32,
+    color_range: u32,
+    chroma_location: u32,
+    alpha_mode: u32,
+    bit_depth: u32,
+    flags: u32,
 }
 
 Media_Type :: struct {
