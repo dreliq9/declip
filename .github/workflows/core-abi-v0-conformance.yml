@@ -1,0 +1,81 @@
+name: Media kernel Core ABI v0 conformance
+
+on:
+  pull_request:
+    branches:
+      - planning/media-kernel
+  workflow_dispatch:
+
+jobs:
+  abi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Odin dev-2026-08
+        run: |
+          curl -fsSL https://github.com/odin-lang/Odin/releases/download/dev-2026-08/odin-linux-amd64-dev-2026-08.tar.gz -o /tmp/odin.tar.gz
+          mkdir -p /tmp/odin-dist
+          tar -C /tmp/odin-dist -xzf /tmp/odin.tar.gz
+          ODIN_BIN="$(find /tmp/odin-dist -type f -name odin -perm -111 | head -1)"
+          test -n "$ODIN_BIN"
+          echo "$(dirname "$ODIN_BIN")" >> "$GITHUB_PATH"
+
+      - name: Compile C C++ and Odin layout probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p core-abi-build
+          cc -std=c11 -O2 -Wall -Wextra -Werror research/kernel-core-abi-v0/layout.c \
+            -Iresearch/kernel-core-abi-v0 -o core-abi-build/layout-c
+          c++ -x c++ -std=c++20 -O2 -Wall -Wextra -Werror research/kernel-core-abi-v0/layout.c \
+            -Iresearch/kernel-core-abi-v0 -o core-abi-build/layout-cpp
+          odin check research/kernel-core-abi-v0/layout.odin -file
+          odin build research/kernel-core-abi-v0/layout.odin -file -o:speed \
+            -out:"$PWD/core-abi-build/layout-odin"
+
+      - name: Compare layouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 research/kernel-core-abi-v0/verify_layout.py \
+            core-abi-build/layout-c core-abi-build/layout-cpp core-abi-build/layout-odin \
+            | tee core-abi-layout.log
+
+      - name: Compile compatibility smoke in C and C++
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror research/kernel-core-abi-v0/compat.c \
+            -Iresearch/kernel-core-abi-v0 -o core-abi-build/compat-c
+          c++ -x c++ -std=c++20 -O2 -Wall -Wextra -Werror research/kernel-core-abi-v0/compat.c \
+            -Iresearch/kernel-core-abi-v0 -o core-abi-build/compat-cpp
+          core-abi-build/compat-c | tee core-abi-compat-c.log
+          core-abi-build/compat-cpp | tee core-abi-compat-cpp.log
+
+      - name: Sanitizer compatibility smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang -std=c11 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+            research/kernel-core-abi-v0/compat.c -Iresearch/kernel-core-abi-v0 \
+            -o core-abi-build/compat-asan
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+            core-abi-build/compat-asan | tee core-abi-asan.log
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: media-kernel-core-abi-v0
+          path: |
+            core-abi-layout-results.json
+            core-abi-layout.log
+            core-abi-compat-c.log
+            core-abi-compat-cpp.log
+            core-abi-asan.log
+            research/kernel-core-abi-v0/include/media_kernel_abi_v0.h
+            research/kernel-core-abi-v0/layout.c
+            research/kernel-core-abi-v0/layout.odin
+            research/kernel-core-abi-v0/compat.c
+            research/kernel-core-abi-v0/verify_layout.py
