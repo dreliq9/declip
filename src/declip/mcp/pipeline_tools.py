@@ -1,11 +1,11 @@
 """MCP adapter for Declip production pipelines."""
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from declip.pipelines import production
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     @mcp.tool()
     def declip_auto_caption(input_file: str, style: str = "bold", model_size: str = "base", language: str | None = None, output_path: str | None = None, ass_only: bool = False) -> str:
         """Generate word-timed styled captions and optionally burn them into video."""

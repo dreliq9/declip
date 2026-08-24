@@ -3,12 +3,12 @@
 import sys
 import logging
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 # All logging to stderr (MCP uses stdio for transport)
 logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
-mcp = FastMCP("declip")
+mcp = MCPServer("declip")
 
 # Register all tool modules
 from declip.mcp import (

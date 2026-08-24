@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 from typing import Annotated, Optional
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from pydantic import Field
 
 from declip import quick
 from declip.results import ConcatResult, ProbeResult, ThumbnailResult, TrimResult
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     @mcp.tool()
     def declip_probe(file_path: Annotated[str, Field(description="Path to a video or audio file")]) -> ProbeResult:
         """Probe media properties including duration, codecs, resolution, HDR, and size."""

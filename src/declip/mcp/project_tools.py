@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import json
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from declip import project_ops
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     @mcp.tool()
     def declip_init(directory: str) -> str:
         """Create a minimal Declip project.json template in a directory."""

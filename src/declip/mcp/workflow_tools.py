@@ -1,7 +1,7 @@
 """MCP tools for high-level declip workflows.
 
 Each tool wraps a `declip.workflows.<name>.run(...)` call and returns the
-typed Pydantic Result. FastMCP serializes these as both `content` (via
+typed Pydantic Result. MCPServer serializes these as both `content` (via
 `__str__`) and `structuredContent` (via the Pydantic schema), so agents can
 read fields directly without parsing the human-readable string.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 from declip.workflows.types import (
     BeatSyncResult,
@@ -22,7 +22,7 @@ from declip.workflows.types import (
 )
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
 
     @mcp.tool()
     def declip_workflow_ingest(

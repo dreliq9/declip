@@ -1,11 +1,11 @@
 """MCP adapter for reusable Declip edit capabilities."""
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from declip import edit
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     @mcp.tool()
     def declip_text_overlay(input_file: str, text: str, position: str = "bottom", font_size: int = 48, font_color: str = "white", bg_color: str = "", start: float = 0, duration: float = 0, font: str = "Arial", shadow_color: str = "", shadow_x: int = 0, shadow_y: int = 0, outline_width: int = 0, outline_color: str = "black", output_path: str | None = None) -> str:
         """Burn a configurable text overlay onto a video."""

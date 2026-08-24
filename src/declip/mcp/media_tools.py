@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
 
     @mcp.tool()
     def declip_loudness(
