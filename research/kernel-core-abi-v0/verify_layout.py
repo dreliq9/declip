@@ -43,6 +43,7 @@ def main():
         "mk_content_hash": 40,
         "mk_media_time": 16,
         "mk_media_rate": 16,
+        "mk_ratio": 16,
         "mk_time_range": 32,
         "mk_wall_time": 16,
         "mk_decimal64": 16,
@@ -50,16 +51,41 @@ def main():
         "mk_bytes_view": 16,
         "mk_string_view": 16,
         "mk_resource_handle": 16,
+        "mk_color_descriptor": 32,
+        "mk_extension_view": 16,
+        "mk_object_ref_view": 16,
+        "mk_channel_position_view": 16,
+        "mk_diagnostic_view": 16,
+        "mk_dependency_view": 16,
+        "mk_effect_view": 16,
+        "mk_lowering_loss_view": 16,
     }
     for t, size in required_sizes.items():
         got = baseline["types"].get(t, {}).get("size")
         if got != size:
-            raise AssertionError(("fixed leaf size", t, got, size))
+            raise AssertionError(("fixed leaf/view size", t, got, size))
 
-    # All public tested structures should stay naturally aligned; no packed ABI.
     for t, info in baseline["types"].items():
         if info["align"] not in (4, 8):
             raise AssertionError(("unexpected public alignment", t, info))
+
+    # Critical pointer-nesting offsets must exist in every probe.
+    for key in [
+        "mk_stream_descriptor.media_type",
+        "mk_diagnostic.subject",
+        "mk_dependency_descriptor.dependent",
+        "mk_dependency_descriptor.dependency",
+        "mk_provenance_event.subject",
+        "mk_provenance_event.actor",
+        "mk_effect_descriptor.target",
+        "mk_lowering_loss.source",
+        "mk_kernel_invocation.actor",
+        "mk_kernel_invocation.snapshot",
+        "mk_kernel_invocation.resource_budget",
+        "mk_kernel_result.resource_usage",
+    ]:
+        if key not in baseline["fields"]:
+            raise AssertionError(("missing pointer-nested field", key))
 
     payload = {
         "layout_equivalent": True,
@@ -71,6 +97,8 @@ def main():
         "notes": {
             "raw_struct_bytes_are_not_serialization": True,
             "pointer_views_are_in_process_only": True,
+            "growable_descriptors_nested_by_pointer": True,
+            "growable_descriptor_collections_are_pointer_arrays": True,
             "tested_pointer_width_bits": 64,
         },
     }
