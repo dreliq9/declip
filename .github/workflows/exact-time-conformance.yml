@@ -31,7 +31,6 @@ jobs:
       - name: Build Odin exact-time library
         run: |
           mkdir -p exact-time-build
-          odin check research/kernel-exact-time-conformance/odin
           odin build research/kernel-exact-time-conformance/odin \
             -build-mode:shared -reloc-mode:pic -o:speed \
             -out:"$PWD/exact-time-build/libmk_exact_time.so"
