@@ -38,12 +38,18 @@ jobs:
           ls -l exact-time-build/libmk_exact_time.so | tee exact-time-binary.txt
 
       - name: Run arbitrary-precision conformance oracle
+        shell: bash
         run: |
+          set -euo pipefail
           python3 research/kernel-exact-time-conformance/verify.py \
             exact-time-build/libmk_exact_time.so | tee exact-time-conformance.log
+          python3 research/kernel-exact-time-conformance/verify_extremes.py \
+            exact-time-build/libmk_exact_time.so | tee exact-time-extremes.log
 
       - name: Compile and run C ABI consumer
+        shell: bash
         run: |
+          set -euo pipefail
           cc -O2 research/kernel-exact-time-conformance/abi_smoke.c \
             -Iresearch/kernel-exact-time-conformance \
             -Lexact-time-build -lmk_exact_time \
@@ -51,14 +57,20 @@ jobs:
             -o exact-time-build/abi-smoke
           exact-time-build/abi-smoke | tee exact-time-c-abi.log
 
-      - name: AddressSanitizer smoke
+      - name: AddressSanitizer C ABI smoke
+        shell: bash
         run: |
+          set -euo pipefail
           odin build research/kernel-exact-time-conformance/odin \
             -build-mode:shared -reloc-mode:pic -o:speed -sanitize:address \
             -out:"$PWD/exact-time-build/libmk_exact_time_asan.so"
+          cc -O1 -g -fsanitize=address research/kernel-exact-time-conformance/abi_smoke.c \
+            -Iresearch/kernel-exact-time-conformance \
+            -Lexact-time-build -l:libmk_exact_time_asan.so \
+            -Wl,-rpath,"$PWD/exact-time-build" \
+            -o exact-time-build/abi-smoke-asan
           ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
-            python3 research/kernel-exact-time-conformance/verify.py \
-            exact-time-build/libmk_exact_time_asan.so | tee exact-time-asan.log
+            exact-time-build/abi-smoke-asan | tee exact-time-asan.log
 
       - name: Upload evidence
         uses: actions/upload-artifact@v4
@@ -69,9 +81,11 @@ jobs:
             exact-time-toolchain.txt
             exact-time-binary.txt
             exact-time-conformance.log
+            exact-time-extremes.log
             exact-time-c-abi.log
             exact-time-asan.log
             research/kernel-exact-time-conformance/README.md
             research/kernel-exact-time-conformance/media_time.h
             research/kernel-exact-time-conformance/odin/media_time.odin
             research/kernel-exact-time-conformance/verify.py
+            research/kernel-exact-time-conformance/verify_extremes.py
