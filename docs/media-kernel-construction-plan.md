@@ -1,13 +1,21 @@
 # Foundational Media Kernel Construction Plan
 
 **Status:** active construction plan  
-**Date:** 2026-08-23  
+**Date:** 2026-08-24  
 **Working name:** Media Kernel  
 **Reference client:** Declip  
 **Primary implementation language:** Odin  
 **Durable public boundary:** stable C ABI
 
-This plan turns `docs/media-kernel-research.md` into a build sequence. It is intentionally biased toward proving semantics with small vertical slices rather than building a broad editor feature set. The implementation-language decision is closed by `docs/media-kernel-final-language-gate.md`: Odin is the Phase 1 primary language, C/C++ remain first-class provider languages, and Rust is the safety-first fallback if production evidence triggers reconsideration.
+This plan turns `docs/media-kernel-research.md` into a build sequence. It is intentionally biased toward proving semantics with small vertical slices rather than building a broad editor feature set.
+
+Phase 0 now has three frozen architectural decisions:
+
+- implementation language: `docs/media-kernel-final-language-gate.md`;
+- exact temporal primitive: `docs/media-kernel-exact-time.md`;
+- two-level IR architecture: `docs/media-kernel-ir-architecture.md`.
+
+The remaining Phase 0 work is contract definition rather than open-ended technology selection: Core ABI v0, the first passive media/type/dependency/loss contracts, ADR consolidation, and the executable vertical-slice specification.
 
 ## 1. Construction strategy
 
@@ -37,36 +45,39 @@ The kernel should provide the primitives and guarantees those workflows consume.
 
 ### 1.3 Implementation repository
 
-The planning documents live in Declip because the need was discovered there. Kernel implementation should move to a dedicated repository before Phase 1 code begins. The final repository name is intentionally left undecided here.
+The planning documents live in Declip because the need was discovered there. Kernel implementation should move to a dedicated repository before Phase 1 code begins. The final repository name remains intentionally undecided until that creation step.
 
 ## 2. Kernel constitution: non-negotiable invariants
 
 These should be written as executable conformance tests as early as possible.
 
-1. **Exact semantic time.** No binary floating-point seconds in committed semantic state or canonical IR.
+1. **Exact semantic time.** Canonical finite time is normalized `{i64 value, positive i64 scale}` exact rational time. No binary floating-point seconds in committed semantic state or canonical IR.
 2. **Committed state is immutable.** Changes occur through typed candidate deltas and atomic commits.
-3. **Persistent identity is not execution identity.** Durable project objects and transient frames/buffers are separate types and lifecycles.
-4. **Canonical IR is backend-neutral.** FFmpeg, MLT, GStreamer, Metal, Vulkan, CUDA, cloud-provider, or codec-specific concepts do not define canonical semantics.
-5. **No silent semantic loss.** Lowering either preserves semantics, records explicit loss/approximation, or fails.
-6. **No implicit consequential conversion.** Time-base, color, channel-layout, memory-domain, precision, and other meaning-changing conversions must be explicit in IR or in a lowering report.
-7. **Render success is not delivery acceptance.** Execution and admission are separate decisions.
-8. **Every derived result declares dependencies.** Analyses, caches, plans, and admissions must be invalidatable from declared dependencies.
-9. **Every external effect declares authority/resource requirements.** Network/model/plugin/cloud execution cannot rely on ambient authority in the long-term architecture.
-10. **Preview and final render share semantics.** Preview may select cheaper implementations but must not silently change the intended project.
-11. **Compatibility is versioned and machine-checkable.** IR, ABI, dialects, operations, plugins, and serialized state all carry versions.
-12. **Creative reasoning remains above the kernel.** The kernel may verify, optimize, schedule, and explain; it does not decide what story the user should tell.
-13. **Provenance is not truth.** Origin, verification, authority, synthetic status, and factual truth remain distinct concepts.
-14. **Backend choice is explainable.** A planner can report why an implementation/backend was selected or rejected.
-15. **Old revisions remain interpretable.** Later invalidation or supersession never rewrites historical meaning.
-16. **Durable objects do not use cross-module owning pointers.** Stable IDs/references are the ownership-neutral contract for persistent media state.
-17. **Ephemeral resources are generation-addressed.** CPU/GPU/provider resources use central stores and `slot + generation` handles so stale reuse is detectable.
-18. **Asynchronous lifetime is explicit.** Submission/fence/cancellation/loss state, not lexical scope, determines when execution resources may be reclaimed.
-19. **Queues are bounded.** Backpressure is an execution condition the scheduler must expose and manage, not an accidental failure mode.
-20. **Safety instrumentation is part of definition of done.** Sanitizers, randomized stress, deterministic replay, ABI conformance, and resource-accounting checks are required for trusted-core changes.
+3. **Persistent identity is not execution identity.** Durable project/editorial objects and transient execution nodes/frames/buffers are separate identities and lifecycles.
+4. **Canonical Editorial IR is backend-neutral.** FFmpeg, MLT, GStreamer, Metal, Vulkan, CUDA, cloud-provider, or codec-specific concepts do not define editorial semantics.
+5. **Editorial and Executable IR are distinct.** Durable/editorial meaning is typed and media-shaped; executable computation is operation/graph oriented.
+6. **No silent semantic loss.** Lowering either preserves semantics, records explicit loss/approximation, or fails.
+7. **No implicit consequential conversion.** Time-base, color, channel-layout, memory-domain, precision, and other meaning-changing conversions must be explicit in IR or in a lowering report.
+8. **Render success is not delivery acceptance.** Execution and admission are separate decisions.
+9. **Every derived result declares dependencies.** Analyses, caches, plans, and admissions must be invalidatable from declared dependencies.
+10. **Every external effect declares authority/resource requirements.** Network/model/plugin/cloud execution cannot rely on ambient authority in the long-term architecture.
+11. **Preview and final render share semantics.** Preview may select cheaper implementations but must not silently change the intended project.
+12. **Compatibility is versioned and machine-checkable.** IR, ABI, dialects, operations, plugins, and serialized state all carry versions.
+13. **Creative reasoning remains above the kernel.** The kernel may verify, optimize, schedule, and explain; it does not decide what story the user should tell.
+14. **Provenance is not truth.** Origin, verification, authority, synthetic status, and factual truth remain distinct concepts.
+15. **Backend choice is explainable.** A planner can report why an implementation/backend was selected or rejected.
+16. **Old revisions remain interpretable.** Later invalidation or supersession never rewrites historical meaning.
+17. **Durable objects do not use cross-module owning pointers.** Stable IDs/references are the ownership-neutral contract for persistent media state.
+18. **Ephemeral resources are generation-addressed.** CPU/GPU/provider resources use central stores and `slot + generation` handles so stale reuse is detectable.
+19. **Asynchronous lifetime is explicit.** Submission/fence/cancellation/loss state, not lexical scope, determines when execution resources may be reclaimed.
+20. **Queues are bounded.** Backpressure is an execution condition the scheduler must expose and manage, not an accidental failure mode.
+21. **Safety instrumentation is part of definition of done.** Sanitizers, randomized stress, deterministic replay, ABI conformance, and resource-accounting checks are required for trusted-core changes.
+22. **Transformation cannot commit State.** Transformation may verify, normalize, rewrite, lower, and propose deltas; State alone publishes persistent revisions.
+23. **Core editorial semantics are typed.** Extensibility uses scoped/versioned extension contracts rather than turning all core objects into generic key/value attribute bags.
 
 ## 3. Working module boundaries
 
-Names remain provisional package/module names, but the implementation-language decision is complete: the kernel begins in Odin behind a stable versioned C ABI. Provider modules may use C/C++ or another native language when a concrete integration justifies it.
+Names remain provisional package/module names. The kernel begins in Odin behind a stable versioned C ABI. Provider modules may use C/C++ or another native language when a concrete integration justifies it.
 
 ```text
 media-core-abi
@@ -78,18 +89,19 @@ media-state
     persistent dependency graph, artifact identity
 
 media-ir
-    editorial IR + executable media IR types and dialect contracts
+    typed/versioned Editorial Media IR
+    + operation/dialect-oriented Executable Media IR
 
 media-transform
     verification, canonicalization, controlled rewrites,
-    normalization, lowering, semantic-loss reports
+    analyses, normalization, lowering, semantic-loss reports
 
 media-execution
     capability planning, graph scheduling, resource/memory domains,
     preview/final policy, execution receipts
 
 media-backend-ffmpeg
-    first concrete execution backend
+    first concrete execution provider
 
 media-admission
     artifact checkers, acceptance profiles, acceptance records
@@ -99,54 +111,53 @@ media-governance
     (minimal initially, expanded after the core vertical slice)
 
 media-capi
-    stable C ABI over kernel-owned operations
+    stable C ABI over kernel-owned operations/contracts
 
 bindings/
     Python first for Declip; other languages later
 
 conformance/
-    kernel invariants, backend capability suites, serialization fixtures
+    kernel invariants, ABI fixtures, backend capability suites,
+    serialization/replay fixtures
 
 examples/
     minimal reference applications and Declip integration fixtures
 ```
 
-## 4. Phase 0 — Architecture freeze and technical bakeoffs
+## 4. Phase 0 — Architecture freeze and technical contracts
 
 **Goal:** establish the contracts that are expensive to change before implementing the kernel.
 
-### 4.1 Exact time bakeoff
+### 4.1 Exact time — COMPLETE
 
-Evaluate at least:
+Frozen by `docs/media-kernel-exact-time.md`.
 
-- signed integer ticks + exact rational rate;
-- canonical numerator/denominator rational time;
-- fixed common-timescale representation with exact conversion metadata.
+Canonical finite time is:
 
-Tests must cover:
+```text
+MediaTime {
+    value: i64
+    scale: i64   // strictly positive
+}
+```
 
-- 24/1, 25/1, 30/1;
-- 24000/1001, 30000/1001, 60000/1001;
-- 44.1 kHz and 48 kHz audio;
-- hour-scale and day-scale timelines;
-- negative time where legal;
-- drop-frame timecode formatting versus underlying exact time;
-- mixed-rate composition without cumulative drift;
-- overflow behavior.
+with GCD normalization, canonical zero `0/1`, exact-or-fail arithmetic, explicit overflow, and no implicit rounding.
 
-**Exit criterion:** exact arithmetic and conversion rules are specified independently of implementation language.
+Frame/sample rates remain separate positive rationals. VFR uses exact timestamps. Drop-frame timecode is presentation only. Ranges are half-open and reject negative duration.
 
-### 4.2 Implementation-language/ABI bakeoff — COMPLETE
+Conformance evidence included common video/audio rates, mixed-rate exact alignment, 20,000 repeated 24000/1001 frame additions with zero drift, VFR/nanosecond timestamps, long sample timelines, drop-frame vectors, randomized arbitrary-precision comparison, 24,300 near-domain-limit cases, a compiled C ABI consumer, and AddressSanitizer.
+
+**Exit criterion: SATISFIED.**
+
+### 4.2 Implementation language / ABI direction — COMPLETE
 
 The stable ABI remains the hard commitment. The implementation-language investigation progressed through three increasingly realistic experiments:
 
 1. a semantic/C-ABI slice across Rust, C++, Zig, and Odin;
 2. a whole-architecture slice covering revisioned state, candidate commits, generational resources, typed execution DAGs, and randomized invalid-operation stress;
-3. the final concurrent/asynchronous ownership gate covering bounded queues, backpressure, multiple producers/workers, cancellation, deferred reclamation behind simulated fences, device/provider loss, sanitizer checks, ThreadSanitizer, and a real Mesa/llvmpipe Vulkan fence lifecycle.
+3. a concurrent/asynchronous ownership gate covering bounded queues, backpressure, multiple producers/workers, cancellation, deferred reclamation behind simulated fences, device/provider loss, sanitizers, ThreadSanitizer, and a real Mesa/llvmpipe Vulkan fence lifecycle.
 
-All four candidates passed the common release concurrency matrix with zero kernel violations, stale-handle acceptance, or leaked resources. C++, Odin, and Rust also passed ThreadSanitizer race probes; Odin and C++ passed AddressSanitizer-based stress; Zig passed ReleaseSafe stress.
-
-The final decision is documented in `docs/media-kernel-final-language-gate.md`:
+The final decision in `docs/media-kernel-final-language-gate.md` is:
 
 ```text
 Primary kernel implementation: Odin
@@ -156,27 +167,45 @@ Safety-first fallback:          Rust
 Zig:                            allowed for a concrete narrow advantage
 ```
 
-The decisive finding is not that Odin is safer than Rust. It is that once ownership-relevant media semantics are explicit kernel concepts—stable IDs, candidate commits, generation handles, resource stores, bounded queues, submission/fence state, cancellation, and provider-loss accounting—the Odin implementation remained comparably direct under concurrency without growing a home-made borrow checker or an unmanageable race surface.
+**Exit criterion: SATISFIED.** Do not reopen general language selection during Phase 1 unless a reconsideration trigger from the final language record is hit.
 
-**Exit criterion: SATISFIED.** Do not reopen general language selection during Phase 1 unless a reconsideration trigger from the final language decision record is hit.
+### 4.3 Canonical IR architecture — COMPLETE
 
-### 4.3 Canonical IR research spike
+Frozen by `docs/media-kernel-ir-architecture.md`.
 
-Build throwaway prototypes for:
-
-- OTIO-like editorial objects with stronger exact-time/types;
-- MLIR-inspired operations/dialects/traits/interfaces/pass management;
-- a simpler custom SSA/dataflow execution IR.
-
-Do not commit to MLIR itself without proving that dependency weight and runtime model fit a media kernel.
-
-### 4.4 Define the first ABI schema
-
-Specify passive versions of:
+The kernel uses a two-level representation:
 
 ```text
+Persistent State
+       |
+       v
+Typed/versioned Editorial Media IR
+       |
+       | verify / canonicalize / transform
+       v
+Operation/dialect-oriented Executable Media IR
+       |
+       v
+planner / scheduler / providers
+```
+
+The Phase 0 spike represented one exact-time project both as typed editorial objects and as a generalized op/attribute graph. Both produced the same semantic hash and the same 11-node executable plans, including `EXACT` and `BAKED_LOSS_OF_EDITABILITY` target cases. Both rejected semantic invalidity.
+
+The typed editorial slice required 71 nonblank lines and zero dynamic attribute lookups; the generalized editorial slice required 180 lines and 15 attribute lookups and made a missing required field representable. This is supporting evidence rather than the core decision criterion.
+
+Compiler-style concepts remain first-class in Transformation/Executable IR: dialects, typed ops, traits/interfaces, analyses, controlled rewrites, pass management, target legality, invalidation, and explicit lowering loss. MLIR itself remains an optional future implementation choice rather than a dependency commitment. OTIO is an adapter/interchange contract rather than literal canonical IR.
+
+**Exit criterion: SATISFIED.**
+
+### 4.4 Core ABI v0 passive schema — NEXT
+
+Specify passive, versionable representations for at least:
+
+```text
+AbiVersion
 MediaTime
 TimeRange
+MediaRate
 ObjectId
 ObjectRef
 ArtifactRef
@@ -184,8 +213,11 @@ SnapshotRef
 RevisionRef
 ContentHash
 Diagnostic
+MediaType / StreamDescriptor
 DependencyDescriptor
+InvalidationDescriptor
 ProvenanceEvent
+ResourceHandle
 ResourceBudget
 ResourceUsage
 EffectDescriptor
@@ -193,21 +225,46 @@ KernelInvocation
 KernelResult
 LoweringLoss
 LoweringReport
+AcceptanceRef / AcceptanceVectorRef
 ```
 
-**Phase 0 deliverables:**
+The ABI should define representation and compatibility mechanics without stealing semantic authority from State, Transformation, Execution, Admission, or Governance.
 
-- architecture decision records;
-- exact-time specification;
-- ABI v0 schema;
-- completed language-gate decision record;
-- first vertical-slice executable specification.
+### 4.5 Phase 0 ADR consolidation
+
+At minimum persist architecture decisions equivalent to:
+
+```text
+ADR-0001  Kernel family boundaries and Declip separation
+ADR-0002  Exact time and time-range semantics
+ADR-0003  Stable C ABI and Odin implementation choice
+ADR-0004  Persistent State vs Executable computation identity
+ADR-0005  Typed Editorial IR vs operation-oriented Executable IR
+ADR-0006  Semantic-loss accounting
+ADR-0007  Resource generation/fence lifetime model
+```
+
+These may initially be compact records that link the larger research/decision documents rather than duplicating them.
+
+### 4.6 First vertical-slice executable specification
+
+Freeze the expected inputs, revisions, canonical editorial representation, executable plan, lowering-loss result, artifact properties, receipt bindings, and admission result for the first end-to-end fixture before Phase 1 grows broad.
+
+**Phase 0 exit deliverables:**
+
+- exact-time specification — **complete**;
+- implementation-language decision — **complete**;
+- IR architecture decision — **complete**;
+- Core ABI v0 schema;
+- ADR index/records;
+- first vertical-slice executable specification;
+- dedicated kernel repository created before Phase 1 production code begins.
 
 ## 5. Phase 1 — State kernel and operation model
 
 **Goal:** prove durable media state without any rendering dependency.
 
-**Implementation:** Odin. Keep the State/IR core free of provider-specific objects and preserve the stable-ID/candidate-commit rules proven in the language gates.
+**Implementation:** Odin. Keep State/Editorial IR free of provider-specific objects and preserve stable-ID/candidate-commit rules.
 
 ### Minimal persistent model
 
@@ -244,7 +301,7 @@ SetOutputIntent
 
 Each operation:
 
-- binds to a base snapshot/revision;
+- binds to an exact base snapshot/revision;
 - validates preconditions;
 - creates a candidate delta;
 - declares affected dependencies;
@@ -253,16 +310,17 @@ Each operation:
 
 ### Required behavior
 
-- undo = move to prior revision, not reverse mutation magic;
+- undo = move to prior revision, not reverse-mutation magic;
 - branch = new lineage from an existing revision;
 - candidate deltas can be inspected without commit;
 - conflicting base revisions are detected;
 - serialization is deterministic and versioned;
-- content hashes bind exact committed state.
+- content hashes bind exact committed state;
+- durable object IDs remain distinct from any later executable node IDs.
 
 **Exit criterion:** a small editing session can be replayed from operations and deterministically reproduce the same revision graph.
 
-## 6. Phase 2 — Canonical editorial IR and Transformation kernel
+## 6. Phase 2 — Typed Editorial IR and Transformation kernel
 
 **Goal:** make project meaning explicit and independently verifiable.
 
@@ -281,13 +339,13 @@ Each operation:
 ### Verification pipeline
 
 1. encoding/IR-version validation;
-2. structural validation;
+2. structural/schema validation;
 3. exact-time/range validation;
 4. type validation;
 5. asset/reference validation;
 6. cross-object scope validation;
-7. operation/trait obligations;
-8. target-profile legality when lowering.
+7. extension/operation obligations;
+8. target-profile legality only when lowering.
 
 ### Controlled rewrite system
 
@@ -304,7 +362,7 @@ normalize_transition_ranges
 infer_required_media_types
 ```
 
-Passes declare preserved/invalidated analyses.
+Passes declare preserved/invalidated analyses and cannot publish persistent State.
 
 ### Semantic-loss contract
 
@@ -322,11 +380,11 @@ UNSUPPORTED
 
 with structured details rather than prose-only warnings.
 
-**Exit criterion:** two semantically equivalent authoring forms canonicalize to the same intended canonical representation, and unsupported target semantics cannot disappear silently.
+**Exit criterion:** semantically equivalent authoring forms canonicalize consistently, and unsupported target semantics cannot disappear silently.
 
-## 7. Phase 3 — Executable Media IR and first FFmpeg backend
+## 7. Phase 3 — Operation-oriented Executable Media IR and first FFmpeg backend
 
-**Goal:** prove that canonical semantics can lower into an executable graph without making FFmpeg canonical.
+**Goal:** prove that canonical editorial semantics can lower into an executable graph without making FFmpeg canonical.
 
 ### Minimal executable node classes
 
@@ -348,20 +406,22 @@ Sink
 
 Each operation/node contract should declare where applicable:
 
-- input/output media types;
+- typed input/output media ports;
 - exact time behavior;
 - color behavior;
 - temporal footprint;
 - supported memory domains;
-- deterministic/replayable traits;
+- deterministic/replayable/cache traits;
 - resource estimate hooks;
-- lowering capabilities.
+- capability requirements;
+- lowering interfaces;
+- dependency/invalidation behavior.
 
 ### First backend
 
 Use FFmpeg because Declip already provides concrete compiler experience and synthetic integration fixtures.
 
-The FFmpeg backend should be treated as an implementation provider, not as the semantic model. Direct C integration from Odin is acceptable; a narrow C/C++ adapter is equally acceptable when it reduces integration risk.
+The FFmpeg backend is an implementation provider, not the semantic model. Direct C integration from Odin is acceptable; a narrow C/C++ adapter is equally acceptable when it reduces integration risk.
 
 ### Planner outputs
 
@@ -375,7 +435,7 @@ The planner should emit:
 - stable execution-plan hash;
 - diagnostics.
 
-**Exit criterion:** the same committed project revision can be compiled repeatedly into equivalent semantic execution plans, rendered through FFmpeg, and rejected cleanly if the backend cannot preserve required semantics.
+**Exit criterion:** the same committed project revision compiles repeatedly into equivalent semantic execution plans, renders through FFmpeg, and rejects cleanly if required semantics cannot be preserved.
 
 ## 8. Phase 4 — First end-to-end vertical slice
 
@@ -391,8 +451,8 @@ This is the first milestone that should be demoed externally.
 6. Agent/application proposes a trim/ripple edit as a candidate delta.
 7. Inspect the candidate diff.
 8. Commit it to revision 1.
-9. Compile revision 1 to canonical editorial IR.
-10. Lower to executable media IR.
+9. Project revision lowers/projects to typed canonical Editorial IR.
+10. Transformation lowers Editorial IR to Executable Media IR.
 11. Plan through FFmpeg with zero silent semantic loss.
 12. Render.
 13. Probe/verify the artifact.
@@ -404,10 +464,11 @@ This is the first milestone that should be demoed externally.
 - every timeline time calculation is exact;
 - candidate delta can be rejected without touching revision 0;
 - committed revision 1 is reproducible from the operation log;
+- durable IDs and executable node IDs remain distinct;
 - the execution plan records backend/version/conversions;
 - unsupported behavior causes an explicit lowering failure/loss record;
 - output duration is correct within defined frame/sample semantics;
-- output resolution/rate/audio layout/color metadata match the declared intent or are reported as deviations;
+- output resolution/rate/audio layout/color metadata match declared intent or are reported as deviations;
 - receipt binds project revision, plan, inputs, tool/backend versions, and output hash;
 - admission is a separate result from render success.
 
@@ -608,9 +669,9 @@ Do not rewrite Declip in one step.
 ### Migration order
 
 1. Kernel exact time + refs become available behind a Declip adapter.
-2. Declip project schema lowers to kernel editorial IR.
+2. Declip project schema projects/lowers to kernel typed Editorial IR.
 3. Declip render-plan normalization is progressively replaced by kernel Transformation passes.
-4. Declip FFmpeg compiler becomes or delegates to the kernel FFmpeg backend.
+4. Declip FFmpeg compiler becomes or delegates to the kernel FFmpeg provider.
 5. Declip editing commands emit kernel candidate operations/deltas.
 6. Declip gains proposal/commit UX through MCP/CLI/Python.
 7. Declip consumes kernel receipts/admission.
@@ -642,17 +703,19 @@ The kernel should be unusually test-driven because its value is semantic trust.
 
 ### Conformance suites
 
-- exact-time arithmetic;
+- exact-time arithmetic and exact/inexact conversion;
 - state/revision replay;
 - transaction conflict behavior;
 - candidate delta non-mutation;
+- Editorial IR structural/semantic verification;
 - canonicalization/idempotence;
+- Executable IR type/DAG verification;
 - backend semantic capability;
 - semantic-loss accounting;
 - dependency/invalidation correctness;
 - preview/final semantic equivalence;
 - admission-profile reproducibility;
-- ABI compatibility/unknown-field preservation;
+- ABI compatibility/unknown-extension preservation;
 - fuzzing of serialized IR and edit operations;
 - concurrent resource retain/release;
 - generation-safe reuse under contention;
@@ -676,21 +739,23 @@ Prefer generated deterministic fixtures for:
 - missing streams;
 - long-duration drift.
 
-## 17. First research/build backlog
+## 17. Immediate research/build backlog
 
 Before writing the first persistent kernel implementation:
 
-1. Specify exact time and time-range algebra.
-2. Specify revision/snapshot/candidate-delta contracts.
-3. Specify `MediaType`/stream descriptors.
-4. Specify `LoweringReport` and `LoweringLoss` taxonomy.
-5. Specify dependency and invalidation contracts.
-6. Specify the first acceptance vector/profile.
-7. **COMPLETE:** freeze Odin + stable C ABI through semantic, architectural, concurrency, sanitizer, and race-detector bakeoffs.
-8. Prototype OTIO-like editorial IR versus custom/MLIR-inspired representation.
-9. Map Declip's current schema/render-plan concepts onto the proposed kernel types.
-10. Define the synthetic end-to-end vertical-slice fixture and expected hashes/semantics.
-11. Create the dedicated kernel repository with Odin-oriented module/package scaffolding before Phase 1 implementation begins.
+1. **COMPLETE:** freeze exact time and time-range algebra.
+2. **COMPLETE:** freeze Odin + stable C ABI language direction through semantic, architectural, concurrency, sanitizer, and race-detector gates.
+3. **COMPLETE:** freeze typed Editorial IR → controlled Transformation → operation-oriented Executable IR.
+4. Define Core ABI v0 passive schema and compatibility rules.
+5. Specify revision/snapshot/candidate-delta contracts.
+6. Specify `MediaType` / stream descriptors.
+7. Specify `LoweringReport` and `LoweringLoss` data contracts.
+8. Specify dependency and invalidation contracts.
+9. Specify the first acceptance vector/profile.
+10. Map Declip's current schema/render-plan concepts onto the frozen kernel types.
+11. Freeze the synthetic end-to-end vertical-slice fixture and expected hashes/semantics.
+12. Consolidate ADRs/index.
+13. Create the dedicated kernel repository with Odin-oriented package/module scaffolding before Phase 1 implementation begins.
 
 ## 18. Primary success metric
 
@@ -698,6 +763,6 @@ Do not measure early success by tool count.
 
 The first meaningful success condition is:
 
-> A Declip-originated edit can become a versioned candidate delta, commit to exact persistent media state, compile through a backend-neutral semantic IR into an FFmpeg execution plan, render without silent semantic loss, and produce a separately checkable accepted artifact with a complete receipt.
+> A Declip-originated edit can become a versioned candidate delta, commit to exact persistent media state, project into typed backend-neutral Editorial IR, lower through controlled Transformation into operation-oriented Executable Media IR, compile into an FFmpeg execution plan without silent semantic loss, render, and produce a separately checkable accepted artifact with a complete receipt.
 
 Once that works, the foundation is real rather than conceptual.
