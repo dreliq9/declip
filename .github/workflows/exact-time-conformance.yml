@@ -1,0 +1,78 @@
+name: Media kernel exact-time conformance
+
+on:
+  pull_request:
+    branches:
+      - planning/media-kernel
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Odin dev-2026-08
+        run: |
+          curl -fsSL https://github.com/odin-lang/Odin/releases/download/dev-2026-08/odin-linux-amd64-dev-2026-08.tar.gz -o /tmp/odin.tar.gz
+          mkdir -p /tmp/odin-dist
+          tar -C /tmp/odin-dist -xzf /tmp/odin.tar.gz
+          ODIN_BIN="$(find /tmp/odin-dist -type f -name odin -perm -111 | head -1)"
+          test -n "$ODIN_BIN"
+          echo "$(dirname "$ODIN_BIN")" >> "$GITHUB_PATH"
+
+      - name: Record toolchain
+        run: |
+          odin version | tee exact-time-toolchain.txt
+          python3 --version | tee -a exact-time-toolchain.txt
+          cc --version | head -1 | tee -a exact-time-toolchain.txt
+
+      - name: Build Odin exact-time library
+        run: |
+          mkdir -p exact-time-build
+          odin check research/kernel-exact-time-conformance/odin
+          odin build research/kernel-exact-time-conformance/odin \
+            -build-mode:shared -reloc-mode:pic -o:speed \
+            -out:"$PWD/exact-time-build/libmk_exact_time.so"
+          strip --strip-unneeded exact-time-build/libmk_exact_time.so
+          ls -l exact-time-build/libmk_exact_time.so | tee exact-time-binary.txt
+
+      - name: Run arbitrary-precision conformance oracle
+        run: |
+          python3 research/kernel-exact-time-conformance/verify.py \
+            exact-time-build/libmk_exact_time.so | tee exact-time-conformance.log
+
+      - name: Compile and run C ABI consumer
+        run: |
+          cc -O2 research/kernel-exact-time-conformance/abi_smoke.c \
+            -Iresearch/kernel-exact-time-conformance \
+            -Lexact-time-build -lmk_exact_time \
+            -Wl,-rpath,"$PWD/exact-time-build" \
+            -o exact-time-build/abi-smoke
+          exact-time-build/abi-smoke | tee exact-time-c-abi.log
+
+      - name: AddressSanitizer smoke
+        run: |
+          odin build research/kernel-exact-time-conformance/odin \
+            -build-mode:shared -reloc-mode:pic -o:speed -sanitize:address \
+            -out:"$PWD/exact-time-build/libmk_exact_time_asan.so"
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+            python3 research/kernel-exact-time-conformance/verify.py \
+            exact-time-build/libmk_exact_time_asan.so | tee exact-time-asan.log
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: media-kernel-exact-time-conformance
+          path: |
+            exact-time-results.json
+            exact-time-toolchain.txt
+            exact-time-binary.txt
+            exact-time-conformance.log
+            exact-time-c-abi.log
+            exact-time-asan.log
+            research/kernel-exact-time-conformance/README.md
+            research/kernel-exact-time-conformance/media_time.h
+            research/kernel-exact-time-conformance/odin/media_time.odin
+            research/kernel-exact-time-conformance/verify.py
