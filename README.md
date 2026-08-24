@@ -107,6 +107,12 @@ declip-mcp
 
 The MCP server exposes Declip capabilities to compatible agents. Structured result models live in `declip.results` and are re-exported from `declip.mcp.types` for backward compatibility; callers do not need MCP to consume the core result contracts.
 
+### YouTube-MCP clip-plan handoff
+
+Declip can import the editor-neutral materialized manifest from `dreliq9/youtube-mcp-v2` using `declip_project_from_clip_plan`. The importer verifies each materialized asset's SHA-256 by default, preserves manifest order, maps each source-trimmed asset to a native clip with `trim_in=0` and `trim_out=duration_s`, and writes a `<project>.sources.json` provenance sidecar.
+
+Import does not render automatically. Review or edit the resulting project, then call `declip_render`.
+
 ## Backend selection
 
 Automatic selection is conservative. FFmpeg currently handles one unpositioned video track with clip audio. Projects with multiple video tracks, positioned overlays, or dedicated timeline audio tracks route to MLT so semantics are not silently discarded.

@@ -13,6 +13,46 @@ def register(mcp: FastMCP) -> None:
         return project_ops.init_project(directory)
 
     @mcp.tool()
+    def declip_project_from_clip_plan(
+        manifest_path: str,
+        project_path: str,
+        output_path: str = "output.mp4",
+        width: int = 1920,
+        height: int = 1080,
+        fps: int = 30,
+        transition: str = "none",
+        transition_duration: float = 0.5,
+        verify_hashes: bool = True,
+        overwrite: bool = False,
+    ) -> str:
+        """Create a native Declip project from a youtube-mcp materialized clip plan.
+
+        The youtube-mcp assets are already source-trimmed. This tool preserves
+        manifest order, verifies each SHA-256 by default, creates one native Declip
+        timeline track, and writes a `.sources.json` provenance sidecar. It does
+        not render; call `declip_render` after reviewing the generated project.
+        """
+        from declip.clip_plan import ClipPlanImportError, project_from_materialized_clip_plan
+
+        try:
+            result = project_from_materialized_clip_plan(
+                manifest_path,
+                project_path,
+                output_path=output_path,
+                resolution=(width, height),
+                fps=fps,
+                transition=transition,
+                transition_duration=transition_duration,
+                verify_hashes=verify_hashes,
+                overwrite=overwrite,
+            )
+        except ClipPlanImportError as exc:
+            return f"Clip-plan import error: {exc}"
+        except Exception as exc:
+            return f"Clip-plan import failed: {exc}"
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
     def declip_validate(project_file: str) -> str:
         """Validate project schema and referenced asset existence."""
         return project_ops.validate_project(project_file)
