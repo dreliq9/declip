@@ -1,0 +1,39 @@
+name: Heimdall bootstrap validation
+
+on:
+  pull_request:
+    branches:
+      - planning/media-kernel
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Odin dev-2026-08
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/odin-lang/Odin/releases/download/dev-2026-08/odin-linux-amd64-dev-2026-08.tar.gz -o /tmp/odin.tar.gz
+          mkdir -p /tmp/odin-dist
+          tar -C /tmp/odin-dist -xzf /tmp/odin.tar.gz
+          ODIN_BIN="$(find /tmp/odin-dist -type f -name odin -perm -111 | head -1)"
+          test -n "$ODIN_BIN"
+          echo "$(dirname "$ODIN_BIN")" >> "$GITHUB_PATH"
+
+      - name: Record toolchain
+        run: odin version
+
+      - name: Check
+        run: odin check research/heimdall-bootstrap-validation/tests/conformance
+
+      - name: Run conformance
+        run: odin run research/heimdall-bootstrap-validation/tests/conformance -o:speed
+
+      - name: AddressSanitizer
+        run: |
+          set -euo pipefail
+          odin build research/heimdall-bootstrap-validation/tests/conformance -o:speed -sanitize:address -out:"$PWD/heimdall-bootstrap-asan"
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 "$PWD/heimdall-bootstrap-asan"
